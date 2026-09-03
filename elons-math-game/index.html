@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Elon's Math Game</title>
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #1a1a40, #3a0ca3, #4361ee);
+      color: white;
+      padding: 24px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 24px;
+      box-shadow: 0 10px 35px rgba(0, 0, 0, 0.35);
+      padding: 24px;
+    }
+
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 18px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .cat {
+      font-size: 42px;
+    }
+
+    .title-wrap h1 {
+      margin: 0;
+      font-size: 36px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      text-shadow: 0 0 12px rgba(255,255,255,0.25);
+    }
+
+    .title-wrap p {
+      margin: 4px 0 0 0;
+      color: #e6e6ff;
+      font-size: 14px;
+    }
+
+    .auth-box {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    input {
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: none;
+      outline: none;
+      font-size: 15px;
+      min-width: 150px;
+    }
+
+    button {
+      border: none;
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.15s ease, opacity 0.15s ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      opacity: 0.95;
+    }
+
+    .btn-primary { background: #ffd60a; color: #1a1a40; }
+    .btn-secondary { background: #4cc9f0; color: #0b132b; }
+    .btn-danger { background: #ff4d6d; color: white; }
+    .btn-purple { background: #b5179e; color: white; }
+    .btn-green { background: #80ed99; color: #103d20; }
+
+    .status-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+      align-items: center;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+      background: rgba(255,255,255,0.16);
+    }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1.35fr 0.9fr;
+      gap: 18px;
+    }
+
+    .panel {
+      background: rgba(255,255,255,0.08);
+      border-radius: 18px;
+      padding: 18px;
+    }
+
+    .section-title {
+      margin: 0 0 14px 0;
+      font-size: 24px;
+    }
+
+    .info-box {
+      background: rgba(255,255,255,0.1);
+      border-radius: 14px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+
+    .question-box {
+      background: rgba(255, 214, 10, 0.18);
+      border: 1px solid rgba(255, 214, 10, 0.35);
+      border-radius: 16px;
+      padding: 18px;
+      margin-top: 14px;
+    }
+
+    .question-text {
+      font-size: 24px;
+      font-weight: 800;
+      margin: 0 0 12px 0;
+    }
+
+    .button-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    .result {
+      min-height: 28px;
+      margin-top: 12px;
+      font-weight: 700;
+    }
+
+    .leaderboard {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .leaderboard li {
+      background: rgba(255,255,255,0.1);
+      margin-bottom: 10px;
+      padding: 12px 14px;
+      border-radius: 14px;
+    }
+
+    .games-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .game-card {
+      background: rgba(255,255,255,0.1);
+      border-radius: 14px;
+      padding: 14px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .small {
+      color: #e6e6ff;
+      font-size: 14px;
+      line-height: 1.45;
+      margin-top: 10px;
+    }
+
+    @media (max-width: 900px) {
+      .main-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .auth-box {
+        width: 100%;
+      }
+
+      .auth-box input {
+        flex: 1 1 180px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <div class="top-bar">
+        <div class="brand">
+          <div class="cat">🐱</div>
+          <div class="title-wrap">
+            <h1>Elon's Math Game</h1>
+            <p>Guest mode first. Log in to save progress and use the leaderboard.</p>
+          </div>
+        </div>
+
+        <div class="auth-box">
+          <input id="username" type="text" placeholder="Username" />
+          <input id="password" type="password" placeholder="Password" />
+          <button class="btn-primary" id="signupBtn">Sign Up</button>
+          <button class="btn-secondary" id="loginBtn">Login</button>
+          <button class="btn-danger hidden" id="logoutBtn">Logout</button>
+        </div>
+      </div>
+
+      <div class="status-row">
+        <div class="pill" id="modePill">Mode: Guest</div>
+        <div class="pill" id="savePill">Not saved</div>
+      </div>
+
+      <div class="main-grid">
+        <div class="panel">
+          <h2 class="section-title">Play</h2>
+
+          <div class="info-box">
+            <div id="welcomeText">Welcome, Guest!</div>
+            <div id="userInfo" style="margin-top: 8px;">Total Points: 0 | Level: 1 | Progress: 0/100</div>
+          </div>
+
+          <div class="question-box">
+            <p class="question-text" id="questionText"></p>
+            <input id="answer" type="text" placeholder="Type your answer" />
+            <div class="button-row">
+              <button class="btn-primary" id="submitBtn">Submit Answer</button>
+              <button class="btn-purple" id="newQuestionBtn">New Question</button>
+            </div>
+            <div class="result" id="result"></div>
+          </div>
+
+          <div class="small">
+            In guest mode you can play normally, but your progress and leaderboard rank are not saved online.
+          </div>
+
+          <h2 class="section-title" style="margin-top: 22px;">Games</h2>
+          <div class="games-grid">
+            <div class="game-card">
+              <h3>Game 1</h3>
+              <p>Replace this with your game link or button.</p>
+              <button class="btn-green" onclick="alert('Hook your game here')">Open</button>
+            </div>
+            <div class="game-card">
+              <h3>Game 2</h3>
+              <p>Replace this with your game link or button.</p>
+              <button class="btn-green" onclick="alert('Hook your game here')">Open</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div id="leaderboardPanel" class="hidden">
+            <h2 class="section-title">Leaderboard</h2>
+            <ul id="leaderboard" class="leaderboard"></ul>
+          </div>
+
+          <div id="guestLeaderboardMessage">
+            <h2 class="section-title">Leaderboard</h2>
+            <div class="info-box">
+              Log in or sign up to unlock the leaderboard and save your score.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import {
+      getAuth,
+      createUserWithEmailAndPassword,
+      signInWithEmailAndPassword,
+      onAuthStateChanged,
+      signOut
+    } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+    import {
+      getFirestore,
+      doc,
+      setDoc,
+      getDoc,
+      updateDoc,
+      collection,
+      getDocs,
+      query,
+      orderBy
+    } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBsQMtx0HpsqhbUds1_PMOfIxNqz8fmsb4",
+      authDomain: "elon-math.firebaseapp.com",
+      projectId: "elon-math",
+      storageBucket: "elon-math.firebasestorage.app",
+      messagingSenderId: "930119263803",
+      appId: "1:930119263803:web:f8276e149c509067d85e1e"
+    };
+
+    const firebaseApp = initializeApp(firebaseConfig);
+    const auth = getAuth(firebaseApp);
+    const db = getFirestore(firebaseApp);
+
+    const usernameInput = document.getElementById("username");
+    const passwordInput = document.getElementById("password");
+    const answerInput = document.getElementById("answer");
+    const questionText = document.getElementById("questionText");
+    const resultEl = document.getElementById("result");
+    const welcomeText = document.getElementById("welcomeText");
+    const userInfo = document.getElementById("userInfo");
+    const leaderboardEl = document.getElementById("leaderboard");
+    const modePill = document.getElementById("modePill");
+    const savePill = document.getElementById("savePill");
+    const leaderboardPanel = document.getElementById("leaderboardPanel");
+    const guestLeaderboardMessage = document.getElementById("guestLeaderboardMessage");
+    const logoutBtn = document.getElementById("logoutBtn");
+
+    document.getElementById("signupBtn").addEventListener("click", signup);
+    document.getElementById("loginBtn").addEventListener("click", login);
+    document.getElementById("submitBtn").addEventListener("click", submitAnswer);
+    document.getElementById("newQuestionBtn").addEventListener("click", loadRandomQuestion);
+    logoutBtn.addEventListener("click", logout);
+
+    let currentMode = "guest"; // guest or signedIn
+    let currentUserData = {
+      username: "Guest",
+      usernameKey: "guest",
+      points: 0,
+      level: 1,
+      xpIntoLevel: 0
+    };
+
+    const questionBank = [
+      { text: "What is 5 + 3?", answer: "8", points: 100 },
+      { text: "What is 12 - 7?", answer: "5", points: 100 },
+      { text: "What is 6 × 4?", answer: "24", points: 100 },
+      { text: "What is 36 ÷ 6?", answer: "6", points: 100 },
+      { text: "Solve: 2x = 14", answer: "7", points: 100 },
+      { text: "Solve: x + 9 = 15", answer: "6", points: 100 }
+    ];
+
+    let currentQuestion = questionBank[0];
+    let ignoreNextGuestAuthEvent = false;
+
+    function sanitizeUsername(username) {
+      return username
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, "")
+        .replace(/[^a-z0-9._-]/g, "");
+    }
+
+    function makeEmailFromUsername(username) {
+      const safe = sanitizeUsername(username);
+      if (!safe) return "";
+      return `${safe}@elonmathgame.com`;
+    }
+
+    function pointsNeededForNextLevel(level) {
+      return 100 + (level - 1) * 10;
+    }
+
+    function applyPoints(userData, earnedPoints) {
+      userData.points += earnedPoints;
+      userData.xpIntoLevel += earnedPoints;
+
+      while (userData.xpIntoLevel >= pointsNeededForNextLevel(userData.level)) {
+        userData.xpIntoLevel -= pointsNeededForNextLevel(userData.level);
+        userData.level++;
+      }
+    }
+
+    function resetGuest() {
+      currentMode = "guest";
+      currentUserData = {
+        username: "Guest",
+        usernameKey: "guest",
+        points: 0,
+        level: 1,
+        xpIntoLevel: 0
+      };
+    }
+
+    function updateUI() {
+      const needed = pointsNeededForNextLevel(currentUserData.level);
+
+      welcomeText.textContent = `Welcome, ${currentUserData.username}!`;
+      userInfo.textContent =
+        `Total Points: ${currentUserData.points} | Level: ${currentUserData.level} | Progress: ${currentUserData.xpIntoLevel}/${needed}`;
+      questionText.textContent = currentQuestion.text;
+
+      if (currentMode === "guest") {
+        modePill.textContent = "Mode: Guest";
+        savePill.textContent = "Not saved";
+        leaderboardPanel.classList.add("hidden");
+        guestLeaderboardMessage.classList.remove("hidden");
+        logoutBtn.classList.add("hidden");
+      } else {
+        modePill.textContent = "Mode: Logged In";
+        savePill.textContent = "Saved online";
+        leaderboardPanel.classList.remove("hidden");
+        guestLeaderboardMessage.classList.add("hidden");
+        logoutBtn.classList.remove("hidden");
+      }
+    }
+
+    function loadRandomQuestion() {
+      const randomIndex = Math.floor(Math.random() * questionBank.length);
+      currentQuestion = questionBank[randomIndex];
+      questionText.textContent = currentQuestion.text;
+      answerInput.value = "";
+      resultEl.textContent = "";
+    }
+
+    async function ensureUserDoc(user, preferredUsername = "") {
+      const userRef = doc(db, "users", user.uid);
+
+      try {
+        const snap = await getDoc(userRef);
+
+        if (snap.exists()) {
+          const data = snap.data();
+          const fixedData = {
+            username: data.username || preferredUsername || "Player",
+            usernameKey: data.usernameKey || sanitizeUsername(data.username || preferredUsername || "Player"),
+            points: typeof data.points === "number" ? data.points : 0,
+            level: typeof data.level === "number" ? data.level : 1,
+            xpIntoLevel: typeof data.xpIntoLevel === "number" ? data.xpIntoLevel : 0,
+            createdAt: data.createdAt || Date.now()
+          };
+
+          await setDoc(userRef, fixedData, { merge: true });
+          return fixedData;
+        }
+
+        const newData = {
+          username: preferredUsername || "Player",
+          usernameKey: sanitizeUsername(preferredUsername || "Player"),
+          points: 0,
+          level: 1,
+          xpIntoLevel: 0,
+          createdAt: Date.now()
+        };
+
+        await setDoc(userRef, newData);
+        return newData;
+      } catch (error) {
+        console.error("ensureUserDoc error:", error);
+        return {
+          username: preferredUsername || "Player",
+          usernameKey: sanitizeUsername(preferredUsername || "Player"),
+          points: 0,
+          level: 1,
+          xpIntoLevel: 0,
+          createdAt: Date.now()
+        };
+      }
+    }
+
+    async function loadLeaderboard() {
+      leaderboardEl.innerHTML = "";
+
+      if (currentMode === "guest") return;
+
+      try {
+        const q = query(collection(db, "users"), orderBy("points", "desc"));
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+          const li = document.createElement("li");
+          li.textContent = "No players yet.";
+          leaderboardEl.appendChild(li);
+          return;
+        }
+
+        let rank = 1;
+        snapshot.forEach((userDoc) => {
+          const data = userDoc.data();
+          const li = document.createElement("li");
+          li.textContent = `#${rank} ${data.username || "Unknown"} — ${data.points || 0} pts — Level ${data.level || 1}`;
+          leaderboardEl.appendChild(li);
+          rank++;
+        });
+      } catch (error) {
+        console.error("Leaderboard error:", error);
+        leaderboardEl.innerHTML = "<li>Could not load leaderboard.</li>";
+      }
+    }
+
+    async function signup() {
+      try {
+        const username = usernameInput.value.trim();
+        const password = passwordInput.value;
+        const email = makeEmailFromUsername(username);
+
+        if (!username || !password) {
+          alert("Please enter a username and password.");
+          return;
+        }
+
+        if (password.length < 6) {
+          alert("Password should be at least 6 characters.");
+          return;
+        }
+
+        if (!email) {
+          alert("Please use a username with letters or numbers.");
+          return;
+        }
+
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+
+        currentMode = "signedIn";
+        currentUserData = await ensureUserDoc(cred.user, username);
+
+        updateUI();
+        await loadLeaderboard();
+      } catch (error) {
+        console.error("Signup error:", error);
+        alert(error.message);
+      }
+    }
+
+    async function login() {
+      try {
+        const username = usernameInput.value.trim();
+        const password = passwordInput.value;
+        const email = makeEmailFromUsername(username);
+
+        if (!username || !password) {
+          alert("Please enter a username and password.");
+          return;
+        }
+
+        if (!email) {
+          alert("Invalid username.");
+          return;
+        }
+
+        const cred = await signInWithEmailAndPassword(auth, email, password);
+
+        currentMode = "signedIn";
+        currentUserData = await ensureUserDoc(cred.user, username);
+
+        updateUI();
+        await loadLeaderboard();
+      } catch (error) {
+        console.error("Login error:", error);
+        alert(error.message);
+      }
+    }
+
+    async function logout() {
+      try {
+        ignoreNextGuestAuthEvent = true;
+        await signOut(auth);
+      } catch (error) {
+        console.error("Logout error:", error);
+      }
+
+      resetGuest();
+      resultEl.textContent = "";
+      answerInput.value = "";
+      usernameInput.value = "";
+      passwordInput.value = "";
+      loadRandomQuestion();
+      updateUI();
+    }
+
+    async function submitAnswer() {
+      const answer = answerInput.value.trim();
+
+      if (answer === currentQuestion.answer) {
+        const earnedPoints = currentQuestion.points;
+        applyPoints(currentUserData, earnedPoints);
+
+        if (currentMode === "signedIn" && auth.currentUser) {
+          try {
+            await updateDoc(doc(db, "users", auth.currentUser.uid), {
+              points: currentUserData.points,
+              level: currentUserData.level,
+              xpIntoLevel: currentUserData.xpIntoLevel
+            });
+          } catch (dbError) {
+            console.error("Point save error:", dbError);
+            resultEl.textContent = `Correct! +${earnedPoints} points (saved only on this device right now)`;
+            answerInput.value = "";
+            updateUI();
+            return;
+          }
+        }
+
+        resultEl.textContent = `Correct! +${earnedPoints} points`;
+      } else {
+        resultEl.textContent = "Wrong answer.";
+      }
+
+      answerInput.value = "";
+      updateUI();
+
+      if (currentMode === "signedIn") {
+        await loadLeaderboard();
+      }
+    }
+
+    onAuthStateChanged(auth, async (user) => {
+      if (ignoreNextGuestAuthEvent) {
+        ignoreNextGuestAuthEvent = false;
+        return;
+      }
+
+      if (user) {
+        const guessedUsername =
+          usernameInput.value.trim() ||
+          user.email?.split("@")[0] ||
+          "Player";
+
+        currentMode = "signedIn";
+        currentUserData = await ensureUserDoc(user, guessedUsername);
+        updateUI();
+        await loadLeaderboard();
+      } else {
+        if (currentMode !== "guest") {
+          resetGuest();
+          updateUI();
+        }
+      }
+    });
+
+    answerInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submitAnswer();
+    });
+
+    passwordInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") login();
+    });
+
+    usernameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") login();
+    });
+
+    loadRandomQuestion();
+    updateUI();
+  </script>
+</body>
+</html>

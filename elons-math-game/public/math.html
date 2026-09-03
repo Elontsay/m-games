@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Elon's Math Game</title>
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #1a1a40, #3a0ca3, #4361ee);
+      color: white;
+      padding: 24px 16px 40px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    .header-icon { font-size: 44px; }
+    .header h1 {
+      margin: 0;
+      font-size: 32px;
+      font-weight: 800;
+      text-shadow: 0 0 16px rgba(255,255,255,0.25);
+    }
+    .header p {
+      margin: 4px 0 0;
+      color: #b8c0ff;
+      font-size: 14px;
+    }
+
+    /* ── Section tabs ── */
+    .section-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 0;
+    }
+
+    .section-tab {
+      background: rgba(255,255,255,0.08);
+      border: 2px solid transparent;
+      border-bottom: none;
+      border-radius: 18px 18px 0 0;
+      padding: 16px 20px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 17px;
+      font-weight: 700;
+      transition: background 0.2s, border-color 0.2s;
+      user-select: none;
+    }
+    .section-tab:hover { background: rgba(255,255,255,0.14); }
+    .section-tab.active {
+      background: rgba(255,255,255,0.16);
+      border-color: rgba(255,255,255,0.25);
+      color: #ffd60a;
+    }
+    .tab-icon { font-size: 22px; }
+
+    /* ── Math Window ── */
+    .math-window {
+      background: rgba(255,255,255,0.12);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 0 0 24px 24px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.35);
+      padding: 32px 28px;
+      min-height: 480px;
+    }
+
+    /* ── Shared components ── */
+    .btn {
+      border: none;
+      border-radius: 12px;
+      padding: 13px 22px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.15s, opacity 0.15s;
+    }
+    .btn:hover { transform: translateY(-2px); opacity: 0.92; }
+    .btn:active { transform: translateY(0); }
+    .btn-primary  { background: #ffd60a; color: #1a1a40; }
+    .btn-secondary{ background: #4cc9f0; color: #0b132b; }
+    .btn-green    { background: #80ed99; color: #0a2e18; }
+    .btn-purple   { background: #b5179e; color: #fff; }
+
+    .window-title {
+      font-size: 26px;
+      font-weight: 800;
+      margin: 0 0 6px;
+    }
+    .window-sub {
+      color: #c0c9ff;
+      font-size: 14px;
+      margin: 0 0 24px;
+    }
+
+    /* ── Lecture ── */
+    .lecture-body {
+      background: rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 22px 24px;
+      line-height: 1.65;
+      font-size: 15px;
+      color: #e8eaff;
+      margin-bottom: 22px;
+    }
+    .lecture-body h3 {
+      margin: 18px 0 8px;
+      font-size: 16px;
+      color: #ffd60a;
+    }
+    .lecture-body h3:first-child { margin-top: 0; }
+
+    .example-box {
+      background: rgba(255, 214, 10, 0.12);
+      border: 1px solid rgba(255,214,10,0.3);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-top: 14px;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+      line-height: 1.8;
+      white-space: pre;
+      overflow-x: auto;
+      color: #fff5b4;
+    }
+
+    /* ── Practice ── */
+    .progress-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 28px;
+    }
+    .progress-label { font-size: 14px; color: #b8c0ff; white-space: nowrap; }
+    .progress-track {
+      flex: 1;
+      height: 8px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: #ffd60a;
+      border-radius: 4px;
+      transition: width 0.4s ease;
+    }
+
+    /* Vertical addition layout */
+    .vert-wrap {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 28px;
+    }
+    .vert-problem {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 0;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 18px;
+      padding: 28px 40px;
+    }
+    .vert-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+    .vert-op-col {
+      width: 32px;
+      text-align: center;
+      font-family: 'Courier New', monospace;
+      font-size: 2.4rem;
+      font-weight: 700;
+      color: #ffd60a;
+    }
+    .vert-num-col {
+      min-width: 140px;
+      text-align: right;
+      font-family: 'Courier New', monospace;
+      font-size: 2.4rem;
+      font-weight: 700;
+    }
+    .vert-divider {
+      height: 3px;
+      background: rgba(255,255,255,0.45);
+      border-radius: 2px;
+      margin: 8px 0;
+    }
+    .vert-input {
+      min-width: 140px;
+      font-family: 'Courier New', monospace;
+      font-size: 2.4rem;
+      font-weight: 700;
+      text-align: right;
+      background: rgba(255,255,255,0.12);
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 10px;
+      color: white;
+      padding: 4px 12px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .vert-input:focus { border-color: #ffd60a; }
+
+    /* Horizontal problem (mult / div) */
+    .horiz-wrap {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 28px;
+      flex-wrap: wrap;
+    }
+    .horiz-expr {
+      font-family: 'Courier New', monospace;
+      font-size: 2.6rem;
+      font-weight: 700;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 16px;
+      padding: 20px 32px;
+    }
+    .horiz-input {
+      font-family: 'Courier New', monospace;
+      font-size: 2.6rem;
+      font-weight: 700;
+      text-align: center;
+      width: 160px;
+      background: rgba(255,255,255,0.12);
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 12px;
+      color: white;
+      padding: 10px 16px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .horiz-input:focus { border-color: #ffd60a; }
+
+    /* Feedback */
+    .feedback {
+      min-height: 32px;
+      font-size: 18px;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 20px;
+      transition: opacity 0.3s;
+    }
+    .feedback.correct { color: #80ed99; }
+    .feedback.wrong   { color: #ff6b6b; }
+
+    /* Submit / Next row */
+    .action-row {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    /* Complete screen */
+    .complete-wrap {
+      text-align: center;
+      padding: 20px 0;
+    }
+    .complete-wrap .trophy { font-size: 72px; margin-bottom: 16px; }
+    .complete-wrap h2 { font-size: 30px; margin: 0 0 10px; }
+    .complete-wrap p  { color: #c0c9ff; font-size: 16px; margin-bottom: 28px; }
+
+    /* ── Games section ── */
+    .games-intro {
+      font-size: 15px;
+      color: #c0c9ff;
+      margin-bottom: 24px;
+    }
+    .games-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+    .game-card {
+      background: rgba(255,255,255,0.09);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 16px;
+      padding: 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.15s;
+    }
+    .game-card:hover { background: rgba(255,255,255,0.15); transform: translateY(-3px); }
+    .game-card .game-icon { font-size: 38px; margin-bottom: 10px; }
+    .game-card h3 { margin: 0 0 6px; font-size: 16px; }
+    .game-card p  { margin: 0; font-size: 12px; color: #b8c0ff; }
+    .coming-soon { opacity: 0.55; cursor: default !important; }
+    .coming-soon:hover { transform: none !important; background: rgba(255,255,255,0.09) !important; }
+
+    /* Guess game */
+    .guess-game {
+      background: rgba(255,255,255,0.08);
+      border-radius: 18px;
+      padding: 28px;
+      max-width: 440px;
+      margin: 0 auto;
+    }
+    .guess-game h2 { margin: 0 0 8px; font-size: 22px; }
+    .guess-game p  { color: #c0c9ff; font-size: 14px; margin: 0 0 20px; }
+    .guess-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .guess-row input {
+      flex: 1;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 2px solid rgba(255,255,255,0.3);
+      background: rgba(255,255,255,0.12);
+      color: white;
+      font-size: 18px;
+      font-weight: 700;
+      text-align: center;
+      outline: none;
+    }
+    .guess-row input:focus { border-color: #ffd60a; }
+    .guess-hint {
+      font-size: 16px;
+      font-weight: 700;
+      min-height: 28px;
+      margin-bottom: 14px;
+    }
+    .guess-attempts {
+      font-size: 13px;
+      color: #b8c0ff;
+      margin-bottom: 16px;
+    }
+
+    /* Admin link */
+    .admin-link {
+      display: block;
+      text-align: right;
+      margin-top: 20px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.3);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    .admin-link:hover { color: rgba(255,255,255,0.6); }
+
+    @media (max-width: 600px) {
+      .header h1 { font-size: 24px; }
+      .vert-num-col, .vert-input { font-size: 1.8rem; min-width: 110px; }
+      .vert-op-col { font-size: 1.8rem; }
+      .horiz-expr  { font-size: 2rem; }
+      .horiz-input { font-size: 2rem; width: 130px; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-icon">🐱</div>
+    <div>
+      <h1>Elon's Math Game</h1>
+      <p>Learn, practice, and play!</p>
+    </div>
+  </div>
+
+  <!-- Section tabs — no menu, side by side above the window -->
+  <div class="section-tabs">
+    <div class="section-tab active" id="tab-math" onclick="switchSection('math')">
+      <span class="tab-icon">📐</span> Math Section
+    </div>
+    <div class="section-tab" id="tab-games" onclick="switchSection('games')">
+      <span class="tab-icon">🎮</span> After-School Games
+    </div>
+  </div>
+
+  <!-- Math Window -->
+  <div class="math-window" id="math-window"></div>
+
+  <a href="/admin.html" class="admin-link">Admin Panel</a>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+const state = {
+  section: 'math',
+  // Phases: addition_lecture → addition_practice → mult_lecture → mult_practice
+  //         → div_lecture → div_practice → complete
+  phase: 'addition_lecture',
+  questionIndex: 0,   // 0–5
+  currentQuestion: null,
+  awaitingNext: false,  // true after feedback shown, waiting for "Next" click
+};
+
+const QUESTIONS_PER_TOPIC = 6;
+
+// ── Section switch ────────────────────────────────────────────────────────────
+function switchSection(section) {
+  state.section = section;
+  document.getElementById('tab-math').classList.toggle('active', section === 'math');
+  document.getElementById('tab-games').classList.toggle('active', section === 'games');
+  render();
+}
+
+// ── Tracking ─────────────────────────────────────────────────────────────────
+function track(event, data = {}) {
+  fetch('/api/track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event, data }),
+  }).catch(() => {});
+}
+
+// ── Question generators ───────────────────────────────────────────────────────
+function makeAddition() {
+  const a = rand(100, 899);
+  const b = rand(100, 899);
+  return { a, b, answer: a + b, type: 'addition' };
+}
+function makeMultiplication() {
+  const a = rand(11, 99);
+  const b = rand(11, 99);
+  return { a, b, answer: a * b, type: 'multiplication' };
+}
+function makeDivision() {
+  // 3-digit dividend, exact (no remainder)
+  const divisor  = rand(2, 9);
+  const quotient = rand(12, 99);   // keeps dividend in 3-digit range
+  const dividend = divisor * quotient;
+  return { a: dividend, b: divisor, answer: quotient, type: 'division' };
+}
+function rand(lo, hi) { return Math.floor(Math.random() * (hi - lo + 1)) + lo; }
+
+function newQuestion(type) {
+  state.currentQuestion = (
+    type === 'addition'       ? makeAddition()       :
+    type === 'multiplication' ? makeMultiplication() : makeDivision()
+  );
+  state.awaitingNext = false;
+}
+
+// ── Lecture content ───────────────────────────────────────────────────────────
+const LECTURES = {
+  addition: {
+    title: 'Long Addition',
+    sub:   'Adding big numbers, column by column',
+    body: `
+<h3>The Idea</h3>
+Line up numbers by place value — ones under ones, tens under tens, hundreds under hundreds.
+Start from the <strong>right</strong> (ones place) and work <strong>left</strong>.
+
+<h3>Carrying</h3>
+If a column's sum is 10 or more: write the ones digit, then <strong>carry the 1</strong> to the next column.
+
+<h3>Worked Example: 473 + 286</h3>`,
+    example: `    4 7 3
+  + 2 8 6
+  -------
+  Ones:      3 + 6 = 9         → write 9
+  Tens:      7 + 8 = 15        → write 5, carry 1
+  Hundreds:  4 + 2 + 1(carry) = 7
+
+  Answer: 7 5 9`,
+    nextPhase: 'addition_practice',
+    nextTopic: 'addition',
+  },
+  multiplication: {
+    title: '2-Digit Multiplication',
+    sub:   'Breaking it into parts makes it easy',
+    body: `
+<h3>The Idea</h3>
+Split the second number into tens and ones, multiply separately, then add.
+
+<h3>Worked Example: 23 × 14</h3>`,
+    example: `  Think of 14 as (10 + 4):
+
+  Step 1 — multiply by the ones digit:  23 × 4 = 92
+  Step 2 — multiply by the tens digit:  23 × 10 = 230
+
+  Step 3 — add the results:  92 + 230 = 322
+
+  Answer: 322`,
+    nextPhase: 'mult_practice',
+    nextTopic: 'multiplication',
+  },
+  division: {
+    title: '3-Digit Long Division',
+    sub:   'How many groups fit inside?',
+    body: `
+<h3>The Idea</h3>
+Work left to right through the dividend, one digit at a time. Ask: "how many times does the divisor fit?" Write the answer above, subtract, bring down the next digit.
+
+<h3>Worked Example: 156 ÷ 4</h3>`,
+    example: `  Step 1 — look at the first two digits: 15
+             How many times does 4 go into 15? → 3  (3×4=12)
+             Remainder: 15 − 12 = 3
+
+  Step 2 — bring down the 6: now we have 36
+             How many times does 4 go into 36? → 9  (9×4=36)
+             Remainder: 0
+
+  Answer: 39`,
+    nextPhase: 'div_practice',
+    nextTopic: 'division',
+  },
+};
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render() {
+  const win = document.getElementById('math-window');
+  if (state.section === 'games') { win.innerHTML = gamesHTML(); attachGuessEvents(); return; }
+
+  switch (state.phase) {
+    case 'addition_lecture':    win.innerHTML = lectureHTML('addition');       attachLectureBtn('addition_practice', 'addition'); break;
+    case 'addition_practice':   win.innerHTML = practiceHTML(); attachPracticeEvents(); break;
+    case 'mult_lecture':        win.innerHTML = lectureHTML('multiplication'); attachLectureBtn('mult_practice', 'multiplication'); break;
+    case 'mult_practice':       win.innerHTML = practiceHTML(); attachPracticeEvents(); break;
+    case 'div_lecture':         win.innerHTML = lectureHTML('division');       attachLectureBtn('div_practice', 'division'); break;
+    case 'div_practice':        win.innerHTML = practiceHTML(); attachPracticeEvents(); break;
+    case 'complete':            win.innerHTML = completeHTML(); attachCompleteBtn(); break;
+  }
+}
+
+// ── Lecture ───────────────────────────────────────────────────────────────────
+function lectureHTML(topic) {
+  const l = LECTURES[topic];
+  return `
+    <div class="window-title">${l.title}</div>
+    <div class="window-sub">${l.sub}</div>
+    <div class="lecture-body">
+      ${l.body}
+      <div class="example-box">${l.example}</div>
+    </div>
+    <div class="action-row">
+      <button class="btn btn-primary" id="start-practice-btn">Start Practice →</button>
+    </div>`;
+}
+
+function attachLectureBtn(nextPhase, topic) {
+  document.getElementById('start-practice-btn').addEventListener('click', () => {
+    state.phase = nextPhase;
+    state.questionIndex = 0;
+    newQuestion(topic);
+    render();
+  });
+}
+
+// ── Practice ──────────────────────────────────────────────────────────────────
+function topicFromPhase() {
+  if (state.phase === 'addition_practice')  return 'addition';
+  if (state.phase === 'mult_practice')      return 'multiplication';
+  return 'division';
+}
+
+function practiceHTML() {
+  const topic = topicFromPhase();
+  const q     = state.currentQuestion;
+  const pct   = (state.questionIndex / QUESTIONS_PER_TOPIC) * 100;
+
+  const problemHTML = topic === 'addition'
+    ? `<div class="vert-wrap">
+        <div class="vert-problem">
+          <div class="vert-row">
+            <span class="vert-op-col"></span>
+            <span class="vert-num-col">${q.a}</span>
+          </div>
+          <div class="vert-row">
+            <span class="vert-op-col">+</span>
+            <span class="vert-num-col">${q.b}</span>
+          </div>
+          <div class="vert-divider"></div>
+          <div class="vert-row">
+            <span class="vert-op-col"></span>
+            <input class="vert-input" id="ans" type="number" placeholder="?" autocomplete="off" ${state.awaitingNext ? 'disabled' : ''} />
+          </div>
+        </div>
+      </div>`
+    : `<div class="horiz-wrap">
+        <div class="horiz-expr">${q.a} ${topic === 'multiplication' ? '×' : '÷'} ${q.b} =</div>
+        <input class="horiz-input" id="ans" type="number" placeholder="?" autocomplete="off" ${state.awaitingNext ? 'disabled' : ''} />
+      </div>`;
+
+  const topicLabel = { addition: 'Long Addition', multiplication: '2-Digit Multiplication', division: '3-Digit Division' }[topic];
+
+  return `
+    <div class="window-title">${topicLabel} — Practice</div>
+    <div class="progress-row">
+      <span class="progress-label">Question ${state.questionIndex + 1} / ${QUESTIONS_PER_TOPIC}</span>
+      <div class="progress-track"><div class="progress-fill" id="pfill" style="width:${pct}%"></div></div>
+    </div>
+    ${problemHTML}
+    <div class="feedback" id="feedback"></div>
+    <div class="action-row">
+      ${state.awaitingNext
+        ? `<button class="btn btn-primary" id="next-btn">${state.questionIndex + 1 < QUESTIONS_PER_TOPIC ? 'Next Question →' : 'Continue →'}</button>`
+        : `<button class="btn btn-primary" id="check-btn">Check Answer</button>`
+      }
+    </div>`;
+}
+
+function attachPracticeEvents() {
+  const topic = topicFromPhase();
+
+  if (state.awaitingNext) {
+    document.getElementById('next-btn').addEventListener('click', advanceQuestion);
+    return;
+  }
+
+  const checkBtn = document.getElementById('check-btn');
+  const ansInput = document.getElementById('ans');
+
+  function doCheck() {
+    const raw  = ansInput.value.trim();
+    if (!raw) return;
+    const val  = parseInt(raw, 10);
+    const corr = val === state.currentQuestion.answer;
+    track('answer', { topic, correct: corr });
+
+    const fb = document.getElementById('feedback');
+    if (corr) {
+      fb.textContent = '✓ Correct!';
+      fb.className = 'feedback correct';
+    } else {
+      fb.textContent = `✗ Not quite — the answer is ${state.currentQuestion.answer}`;
+      fb.className = 'feedback wrong';
+    }
+
+    state.awaitingNext = true;
+    checkBtn.remove();
+    ansInput.disabled = true;
+
+    const row = document.querySelector('.action-row');
+    const nb  = document.createElement('button');
+    nb.id        = 'next-btn';
+    nb.className = 'btn btn-primary';
+    nb.textContent = state.questionIndex + 1 < QUESTIONS_PER_TOPIC ? 'Next Question →' : 'Continue →';
+    row.appendChild(nb);
+    nb.addEventListener('click', advanceQuestion);
+  }
+
+  checkBtn.addEventListener('click', doCheck);
+  ansInput.addEventListener('keydown', e => { if (e.key === 'Enter') doCheck(); });
+  ansInput.focus();
+}
+
+function advanceQuestion() {
+  const topic = topicFromPhase();
+  state.questionIndex++;
+
+  if (state.questionIndex >= QUESTIONS_PER_TOPIC) {
+    // Move to next phase
+    const next = {
+      addition_practice: 'mult_lecture',
+      mult_practice:     'div_lecture',
+      div_practice:      'complete',
+    }[state.phase];
+    state.phase = next;
+    state.questionIndex = 0;
+    state.awaitingNext  = false;
+  } else {
+    newQuestion(topic);
+  }
+  render();
+}
+
+// ── Complete ──────────────────────────────────────────────────────────────────
+function completeHTML() {
+  return `
+    <div class="complete-wrap">
+      <div class="trophy">🏆</div>
+      <h2>You finished all three topics!</h2>
+      <p>Long Addition · 2-Digit Multiplication · 3-Digit Division</p>
+      <div class="action-row">
+        <button class="btn btn-primary" id="restart-btn">Start Over</button>
+      </div>
+    </div>`;
+}
+
+function attachCompleteBtn() {
+  document.getElementById('restart-btn').addEventListener('click', () => {
+    state.phase = 'addition_lecture';
+    state.questionIndex = 0;
+    state.awaitingNext  = false;
+    state.currentQuestion = null;
+    render();
+  });
+}
+
+// ── Games section ─────────────────────────────────────────────────────────────
+let guessTarget = 0, guessAttempts = 0, guessOver = false;
+
+function gamesHTML() {
+  return `
+    <div class="window-title">After-School Games</div>
+    <p class="games-intro">Take a break and play! More games coming soon.</p>
+
+    <div class="games-grid">
+      <div class="game-card" onclick="startGuessGame()">
+        <div class="game-icon">🔢</div>
+        <h3>Number Guess</h3>
+        <p>Can you find the secret number?</p>
+      </div>
+      <div class="game-card coming-soon">
+        <div class="game-icon">🍕</div>
+        <h3>Fraction Pizza</h3>
+        <p>Coming Soon</p>
+      </div>
+      <div class="game-card coming-soon">
+        <div class="game-icon">⚡</div>
+        <h3>Speed Math</h3>
+        <p>Coming Soon</p>
+      </div>
+      <div class="game-card coming-soon">
+        <div class="game-icon">🎴</div>
+        <h3>Math Bingo</h3>
+        <p>Coming Soon</p>
+      </div>
+    </div>
+
+    <div class="guess-game" id="guess-game" style="display:none">
+      <h2>🔢 Number Guess</h2>
+      <p>I'm thinking of a number between 1 and 100. You have 10 tries!</p>
+      <div class="guess-row">
+        <input type="number" id="guess-input" placeholder="Your guess" min="1" max="100" />
+        <button class="btn btn-primary" id="guess-btn">Guess!</button>
+      </div>
+      <div class="guess-hint" id="guess-hint"></div>
+      <div class="guess-attempts" id="guess-attempts">Attempts: 0 / 10</div>
+      <button class="btn btn-secondary" id="guess-reset" style="display:none">Play Again</button>
+    </div>`;
+}
+
+function attachGuessEvents() {
+  document.querySelectorAll('.game-card').forEach(c => {
+    if (!c.classList.contains('coming-soon') && c.querySelector('h3').textContent === 'Number Guess') {
+      c.addEventListener('click', startGuessGame);
+    }
+  });
+}
+
+function startGuessGame() {
+  guessTarget   = rand(1, 100);
+  guessAttempts = 0;
+  guessOver     = false;
+
+  const box = document.getElementById('guess-game');
+  box.style.display = 'block';
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  document.getElementById('guess-hint').textContent   = '';
+  document.getElementById('guess-attempts').textContent = 'Attempts: 0 / 10';
+  document.getElementById('guess-input').value        = '';
+  document.getElementById('guess-input').disabled     = false;
+  document.getElementById('guess-btn').disabled       = false;
+  document.getElementById('guess-reset').style.display = 'none';
+
+  document.getElementById('guess-btn').onclick = doGuess;
+  document.getElementById('guess-input').onkeydown = e => { if (e.key === 'Enter') doGuess(); };
+  document.getElementById('guess-reset').onclick = startGuessGame;
+}
+
+function doGuess() {
+  if (guessOver) return;
+  const input = document.getElementById('guess-input');
+  const val   = parseInt(input.value, 10);
+  if (!val || val < 1 || val > 100) return;
+
+  guessAttempts++;
+  input.value = '';
+  input.focus();
+
+  const hint    = document.getElementById('guess-hint');
+  const attText = document.getElementById('guess-attempts');
+  attText.textContent = `Attempts: ${guessAttempts} / 10`;
+
+  if (val === guessTarget) {
+    hint.textContent = `🎉 Yes! The number was ${guessTarget}. You got it in ${guessAttempts} ${guessAttempts === 1 ? 'try' : 'tries'}!`;
+    hint.style.color = '#80ed99';
+    endGuess();
+  } else if (guessAttempts >= 10) {
+    hint.textContent = `😬 Out of tries! The number was ${guessTarget}.`;
+    hint.style.color = '#ff6b6b';
+    endGuess();
+  } else {
+    hint.textContent = val < guessTarget ? '📈 Too low! Try higher.' : '📉 Too high! Try lower.';
+    hint.style.color = '#ffd60a';
+  }
+}
+
+function endGuess() {
+  guessOver = true;
+  document.getElementById('guess-input').disabled = true;
+  document.getElementById('guess-btn').disabled   = true;
+  document.getElementById('guess-reset').style.display = 'inline-block';
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+track('session_start');
+render();
+</script>
+</body>
+</html>

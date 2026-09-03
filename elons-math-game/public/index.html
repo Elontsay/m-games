@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PetBall — Dogs vs Cats</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #fff;
+      user-select: none;
+    }
+    #game { display: block; width: 100vw; height: 100vh; cursor: none; }
+    .overlay {
+      position: fixed;
+      pointer-events: none;
+      font-size: 13px;
+      letter-spacing: 0.5px;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    }
+    #hud      { top: 12px;    left: 14px;  opacity: 0.85; font-weight: 600; }
+    #controls { bottom: 12px; left: 14px;  opacity: 0.7; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="hud" class="overlay">PetBall v0.1 — At-Bat</div>
+  <div id="controls" class="overlay">← ↑ → ↓ aim &nbsp;•&nbsp; A swing/throw &nbsp;•&nbsp; Space pitch (batting) &nbsp;•&nbsp; M switch mode</div>
+
+  <script>
+  (() => {
+    const cvs = document.getElementById('game');
+    const ctx = cvs.getContext('2d');
+    let W = 0, H = 0, DPR = 1;
+
+    function resize() {
+      DPR = Math.min(2, window.devicePixelRatio || 1);
+      W = window.innerWidth;
+      H = window.innerHeight;
+      cvs.width  = Math.floor(W * DPR);
+      cvs.height = Math.floor(H * DPR);
+      cvs.style.width  = W + 'px';
+      cvs.style.height = H + 'px';
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // ---------- Utilities ----------
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    const lerp  = (a, b, t) => a + (b - a) * t;
+    const rand  = (a, b) => a + Math.random() * (b - a);
+    const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+    const easeInQuad   = t => t * t;
+
+    // ---------- Input ----------
+    const keys = {};
+    const justPressed = {};
+    window.addEventListener('keydown', e => {
+      if (!keys[e.code]) justPressed[e.code] = true;
+      keys[e.code] = true;
+      if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space','KeyA'].includes(e.code)) {
+        e.preventDefault();
+      }
+    });
+    window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+    // ---------- Game state ----------
+    const game = {
+      mode: 'bat',                       // 'bat' | 'pitch'
+      // Player's aim reticle — bat target in batting mode, pitch target in pitching mode
+      aim: { x: 0, y: 0, tx: 0, ty: 0 },
+      // Bat physical state — derived from aim (batting) or AI (pitching)
+      bat: { x: 0, y: 0, swinging: false, swingT: 0 },
+      // CPU batter (pitching mode)
+      aiBatter: {
+        decided: false, willSwing: false, willContact: false,
+        aimX: 0, aimY: 0, swungYet: false,
+      },
+      ball: {
+        active: false, hit: false,
+        x: 0, y: 0, z: 0,
+        startX: 0, startY: 0, endX: 0, endY: 0,
+        hitVx: 0, hitVy: 0, hitT: 0,
+      },
+      pitch: { phase: 'idle', t: 0 },    // idle | wind | flight | settle
+      pitcher: { lean: 0 },
+      message: { text: 'Press SPACE to pitch  •  M to switch mode', t: 0, color: '#fff', persist: true },
+      shake: 0,
+      particles: [],
+      score: { hits: 0, strikes: 0, whiffs: 0, balls: 0 },
+    };
+
+    function initAim() {
+      game.aim.tx = W * 0.5;
+      game.aim.ty = H * 0.68;
+      game.aim.x = game.aim.tx;
+      game.aim.y = game.aim.ty;
+      game.bat.x = game.aim.x;
+      game.bat.y = game.aim.y;
+    }
+    initAim();
+    window.addEventListener('resize', initAim);
+
+    // Batter ready stance (where the bat rests when AI hasn't swung)
+    const READY = () => ({ x: W * 0.54, y: H * 0.70 });
+
+    // Strike zone helpers
+    const ZONE = () => ({
+      l: W * 0.44, r: W * 0.56, t: H * 0.58, b: H * 0.76,
+      cx: W * 0.50, cy: H * 0.67,
+      halfW: (W * 0.56 - W * 0.44) / 2,
+      halfH: (H * 0.76 - H * 0.58) / 2,
+    });
+    function ballInZone(x, y) {
+      const z = ZONE();
+      return x > z.l && x < z.r && y > z.t && y < z.b;
+    }
+    // Normalized distance from zone center (1.0 = zone edge)
+    function zoneDist(x, y) {
+      const z = ZONE();
+      return Math.hypot((x - z.cx) / z.halfW, (y - z.cy) / z.halfH);
+    }
+
+    // CPU batter logic — chases pitches near the zone, harder to fool way outside
+    function decideBatterSwing(endX, endY) {
+      const d = zoneDist(endX, endY);
+      let p;
+      if (d < 0.7)      p = 0.90;   // middle/heart — usually swings
+      else if (d < 1.0) p = 0.82;   // in zone, edges
+      else if (d < 1.35) p = 0.55;  // just outside — easily fooled
+      else if (d < 1.8) p = 0.22;   // clearly a ball — sometimes chases
+      else              p = 0.04;   // way outside — rarely
+      return Math.random() < p;
+    }
+    // Contact probability — best down the middle, drops at corners/outside
+    function decideBatterContact(endX, endY) {
+      const d = zoneDist(endX, endY);
+      let p;
+      if (d < 0.4)      p = 0.85;   // pipe down the middle
+      else if (d < 0.8) p = 0.62;   // good area
+      else if (d < 1.0) p = 0.38;   // corners
+      else if (d < 1.4) p = 0.18;   // just outside
+      else              p = 0.05;   // chasing
+      return Math.random() < p;
+    }
+
+    function startPitch() {
+      game.pitch.phase = 'wind';
+      game.pitch.t = 0;
+      // Release point: pitcher's hand, just above the horizon
+      game.ball.startX = W * 0.5 + 6 + rand(-3, 3);
+      game.ball.startY = H * 0.50 + rand(-2, 2);
+      game.ball.endX = W * 0.5 + rand(-W * 0.06, W * 0.06);
+      game.ball.endY = H * 0.66 + rand(-H * 0.08, H * 0.08);
+      game.ball.active = false;
+      game.ball.hit = false;
+      game.ball.hitT = 0;
+      game.ball.z = 0;
+    }
+
+    // Pitcher-mode throw: end point follows the player's aim reticle
+    // (with a small accuracy error so it isn't perfect every time).
+    function startPitchAimed() {
+      game.pitch.phase = 'wind';
+      game.pitch.t = 0;
+      game.ball.startX = W * 0.5 + 6 + rand(-3, 3);
+      game.ball.startY = H * 0.50 + rand(-2, 2);
+      const errX = rand(-W * 0.012, W * 0.012);
+      const errY = rand(-H * 0.012, H * 0.012);
+      game.ball.endX = game.aim.x + errX;
+      game.ball.endY = game.aim.y + errY;
+      game.ball.active = false;
+      game.ball.hit = false;
+      game.ball.hitT = 0;
+      game.ball.z = 0;
+      // Reset CPU batter for this pitch
+      game.aiBatter.decided = false;
+      game.aiBatter.willSwing = false;
+      game.aiBatter.willContact = false;
+      game.aiBatter.swungYet = false;
+    }
+
+    function toggleMode() {
+      game.mode = (game.mode === 'bat') ? 'pitch' : 'bat';
+      // reset everything so we don't leave a half-played pitch on screen
+      game.pitch.phase = 'idle';
+      game.pitch.t = 0;
+      game.ball.active = false;
+      game.ball.hit = false;
+      game.bat.swinging = false;
+      game.bat.swingT = 0;
+      game.aiBatter.decided = false;
+      game.aiBatter.swungYet = false;
+      game.shake = 0;
+      game.particles.length = 0;
+      const label = game.mode === 'pitch'
+        ? 'PITCHING — aim, A to throw'
+        : 'BATTING — A to swing';
+      game.message = { text: label, t: 0, color: '#fff', persist: false, ttl: 1.8 };
+    }
+
+    function showMessage(text, color, ttl = 1.4) {
+      game.message = { text, color, t: 0, persist: false, ttl };
+    }
+
+    // ---------- Bat geometry ----------
+    // Bat pivots from an off-screen-ish "hands" position (bottom-right);
+    // its tip sweeps through the bat target point (game.bat.x/y).
+    const PIVOT = () => ({ x: W * 0.92, y: H * 0.95 });
+
+    function batTipInfo() {
+      const p = PIVOT();
+      const dx = game.bat.x - p.x;
+      const dy = game.bat.y - p.y;
+      const L = Math.hypot(dx, dy);
+      const thetaTarget = Math.atan2(dy, dx);
+      const alpha = 0.75; // half-arc of the swing
+      let theta;
+      if (game.bat.swinging) {
+        const t = clamp(game.bat.swingT / 0.32, 0, 1);
+        theta = thetaTarget + lerp(alpha, -alpha, easeOutCubic(t));
+      } else {
+        theta = thetaTarget + alpha; // cocked back
+      }
+      return {
+        px: p.x, py: p.y, L, theta,
+        tipX: p.x + L * Math.cos(theta),
+        tipY: p.y + L * Math.sin(theta),
+      };
+    }
+
+    // ---------- Update ----------
+    function update(dt) {
+      // Player aim — small per-tap nudge for precision + slow drift if held
+      const NUDGE = 12;
+      if (justPressed.ArrowLeft)  game.aim.tx -= NUDGE;
+      if (justPressed.ArrowRight) game.aim.tx += NUDGE;
+      if (justPressed.ArrowUp)    game.aim.ty -= NUDGE;
+      if (justPressed.ArrowDown)  game.aim.ty += NUDGE;
+      const aimSpeed = 240;
+      if (keys.ArrowLeft)  game.aim.tx -= aimSpeed * dt;
+      if (keys.ArrowRight) game.aim.tx += aimSpeed * dt;
+      if (keys.ArrowUp)    game.aim.ty -= aimSpeed * dt;
+      if (keys.ArrowDown)  game.aim.ty += aimSpeed * dt;
+      game.aim.tx = clamp(game.aim.tx, W * 0.30, W * 0.70);
+      game.aim.ty = clamp(game.aim.ty, H * 0.55, H * 0.84);
+      const k = 1 - Math.exp(-dt * 16);
+      game.aim.x += (game.aim.tx - game.aim.x) * k;
+      game.aim.y += (game.aim.ty - game.aim.y) * k;
+
+      // Bat physical target — depends on mode
+      if (game.mode === 'bat') {
+        game.bat.x = game.aim.x;
+        game.bat.y = game.aim.y;
+      } else {
+        // Pitching mode: bat sits in a ready stance unless the CPU is swinging
+        if (game.aiBatter.swungYet) {
+          game.bat.x = game.aiBatter.aimX;
+          game.bat.y = game.aiBatter.aimY;
+        } else {
+          const ready = READY();
+          game.bat.x = ready.x;
+          game.bat.y = ready.y;
+        }
+      }
+
+      // Mode toggle
+      if (justPressed.KeyM) toggleMode();
+
+      // Player swing (batting mode only)
+      if (game.mode === 'bat' && justPressed.KeyA && !game.bat.swinging) {
+        game.bat.swinging = true;
+        game.bat.swingT = 0;
+      }
+      if (game.bat.swinging) {
+        game.bat.swingT += dt;
+        if (game.bat.swingT > 0.34) {
+          game.bat.swinging = false;
+          game.bat.swingT = 0;
+        }
+      }
+
+      // Pitch phases
+      if (game.pitch.phase === 'idle') {
+        const throwTriggered = game.mode === 'pitch' && justPressed.KeyA;
+        if (throwTriggered) {
+          startPitchAimed();
+          game.message = { text: '', t: 0, color: '#fff', persist: false, ttl: 0 };
+        } else if (game.mode === 'bat' && justPressed.Space) {
+          startPitch();
+          game.message = { text: '', t: 0, color: '#fff', persist: false, ttl: 0 };
+        }
+      } else if (game.pitch.phase === 'wind') {
+        game.pitch.t += dt;
+        const T = 0.75;
+        game.pitcher.lean = Math.sin((game.pitch.t / T) * Math.PI) * 0.35;
+        if (game.pitch.t >= T) {
+          game.pitch.phase = 'flight';
+          game.pitch.t = 0;
+          game.ball.active = true;
+          game.ball.z = 0;
+          game.pitcher.lean = 0;
+        }
+      } else if (game.pitch.phase === 'flight') {
+        game.pitch.t += dt;
+        const flightTime = 1.6;
+        const t01 = clamp(game.pitch.t / flightTime, 0, 1);
+        game.ball.z = easeInQuad(t01);
+        game.ball.x = lerp(game.ball.startX, game.ball.endX, game.ball.z);
+        game.ball.y = lerp(game.ball.startY, game.ball.endY, game.ball.z);
+
+        // ---- Pitching mode: CPU batter decision + swing ----
+        if (game.mode === 'pitch') {
+          // Decide once per pitch
+          if (!game.aiBatter.decided) {
+            const swing = decideBatterSwing(game.ball.endX, game.ball.endY);
+            game.aiBatter.willSwing = swing;
+            game.aiBatter.willContact = swing && decideBatterContact(game.ball.endX, game.ball.endY);
+            // Where the CPU bat aims (noisy version of where the ball is going)
+            game.aiBatter.aimX = game.ball.endX + rand(-W * 0.018, W * 0.018);
+            game.aiBatter.aimY = game.ball.endY + rand(-H * 0.018, H * 0.018);
+            game.aiBatter.decided = true;
+          }
+          // Trigger the swing so its peak meets the ball at the plate
+          const SWING_LEAD = 0.16;
+          if (game.aiBatter.willSwing && !game.aiBatter.swungYet &&
+              game.pitch.t >= flightTime - SWING_LEAD) {
+            game.bat.swinging = true;
+            game.bat.swingT = 0;
+            game.aiBatter.swungYet = true;
+          }
+          // Contact happens at the peak of the swing if willContact was rolled
+          if (game.aiBatter.willContact && game.bat.swinging && !game.ball.hit) {
+            const swT = game.bat.swingT / 0.32;
+            if (swT >= 0.45 && swT <= 0.6) {
+              game.ball.hit = true;
+              game.ball.hitT = 0;
+              game.ball.hitVx = (game.ball.x - W * 0.5) * 3.5 + rand(-150, 150);
+              game.ball.hitVy = -780 - Math.random() * 380;
+              game.shake = 0.7;
+              game.score.hits++;
+              showMessage('Hit!', '#ff8787', 1.4);
+              for (let i = 0; i < 18; i++) {
+                game.particles.push({
+                  x: game.ball.x, y: game.ball.y,
+                  vx: rand(-320, 320), vy: rand(-300, 100),
+                  life: rand(0.35, 0.7), t: 0,
+                });
+              }
+            }
+          }
+        }
+
+        // ---- Batting mode: player swing collision ----
+        if (game.mode === 'bat' && !game.ball.hit && game.bat.swinging) {
+          const swT = game.bat.swingT / 0.32;
+          if (swT >= 0.28 && swT <= 0.72) {
+            const tip = batTipInfo();
+            const dx = game.ball.x - tip.tipX;
+            const dy = game.ball.y - tip.tipY;
+            const ballR = 6 + 22 * game.ball.z;
+            const sweet = 34 + 14 * game.ball.z;
+            if (Math.hypot(dx, dy) < ballR + sweet) {
+              game.ball.hit = true;
+              game.ball.hitT = 0;
+              game.ball.hitVx = (game.ball.x - W * 0.5) * 4 + rand(-80, 80);
+              game.ball.hitVy = -900 - Math.random() * 350;
+              game.shake = 1;
+              game.score.hits++;
+              showMessage('CRACK!', '#ffe066', 1.4);
+              for (let i = 0; i < 22; i++) {
+                game.particles.push({
+                  x: game.ball.x, y: game.ball.y,
+                  vx: rand(-360, 360), vy: rand(-360, 120),
+                  life: rand(0.35, 0.7), t: 0,
+                });
+              }
+            }
+          }
+        }
+
+        if (t01 >= 1 && !game.ball.hit) {
+          const inZone = ballInZone(game.ball.endX, game.ball.endY);
+          if (game.mode === 'pitch') {
+            if (game.aiBatter.willSwing) {
+              showMessage('Strike — swinging!', '#69db7c');
+              game.score.strikes++;
+            } else if (inZone) {
+              showMessage('Strike — looking!', '#69db7c');
+              game.score.strikes++;
+            } else {
+              showMessage('Ball.', '#74c0fc');
+              game.score.balls++;
+            }
+          } else {
+            const swung = game.bat.swinging || game.bat.swingT > 0;
+            if (swung) {
+              showMessage('Whiff!', '#ff8787');
+              game.score.whiffs++;
+            } else if (inZone) {
+              showMessage('Strike!', '#ff8787');
+              game.score.strikes++;
+            } else {
+              showMessage('Ball.', '#74c0fc');
+              game.score.balls++;
+            }
+          }
+          game.pitch.phase = 'settle';
+          game.pitch.t = 0;
+        }
+      } else if (game.pitch.phase === 'settle') {
+        game.pitch.t += dt;
+        if (game.mode === 'pitch') {
+          // Wait for the player to throw the next pitch (or auto-clear after a moment)
+          const next = justPressed.KeyA;
+          if (next || game.pitch.t > 2.5) {
+            game.ball.active = false;
+            game.ball.hit = false;
+            if (next) {
+              startPitchAimed();
+            } else {
+              game.pitch.phase = 'idle';
+              game.pitch.t = 0;
+            }
+          }
+        } else {
+          if (game.pitch.t > 1.5 || justPressed.Space) {
+            game.ball.active = false;
+            game.ball.hit = false;
+            startPitch();
+          }
+        }
+      }
+
+      // Hit ball flight
+      if (game.ball.hit) {
+        game.ball.hitT += dt;
+        game.ball.x += game.ball.hitVx * dt;
+        game.ball.y += game.ball.hitVy * dt;
+        game.ball.hitVy += 700 * dt; // gravity
+        game.ball.z = Math.max(0, 1 - game.ball.hitT * 0.55);
+        if (game.ball.hitT > 2.0) {
+          game.pitch.phase = 'settle';
+          game.pitch.t = Math.max(game.pitch.t, 0.5);
+        }
+      }
+
+      // Decay
+      game.shake = Math.max(0, game.shake - dt * 3.5);
+      game.message.t += dt;
+
+      // Particles
+      for (const p of game.particles) {
+        p.t += dt;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 600 * dt;
+      }
+      game.particles = game.particles.filter(p => p.t < p.life);
+
+      // Clear edge-triggered
+      for (const k of Object.keys(justPressed)) justPressed[k] = false;
+    }
+
+    // ---------- Render ----------
+    function render() {
+      // Screen shake
+      const sx = (Math.random() - 0.5) * game.shake * 14;
+      const sy = (Math.random() - 0.5) * game.shake * 14;
+
+      ctx.save();
+      ctx.translate(sx, sy);
+
+      drawScene();
+      drawPitcher(W * 0.5, H * 0.55, game.pitcher.lean);
+      drawStrikeZone();
+      drawBall();
+      drawParticles();
+      drawBat();
+      drawReticle();
+
+      ctx.restore();
+
+      drawHUD();
+      drawMessage();
+    }
+
+    function drawScene() {
+      const horizonY = H * 0.50;
+      const homeX = W * 0.5, homeY = H * 0.94;
+      const moundX = W * 0.5, moundY = H * 0.555;
+      const firstX = W * 0.74, firstY = H * 0.74;
+      const thirdX = W * 0.26, thirdY = H * 0.74;
+
+      // ---- Sky ----
+      const sky = ctx.createLinearGradient(0, 0, 0, horizonY);
+      sky.addColorStop(0, '#2f86ff');
+      sky.addColorStop(1, '#cfe6ff');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, W, horizonY);
+
+      // Wispy clouds
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.beginPath();
+      ctx.ellipse(W * 0.15, H * 0.14, 60, 10, 0, 0, 2 * Math.PI);
+      ctx.ellipse(W * 0.78, H * 0.20, 90, 14, 0, 0, 2 * Math.PI);
+      ctx.ellipse(W * 0.45, H * 0.07, 40, 8,  0, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // ---- Outfield wall (subtle perspective curve) ----
+      const wallTop = horizonY;
+      const wallH   = H * 0.045;
+      ctx.fillStyle = '#163a6e';
+      ctx.beginPath();
+      ctx.moveTo(0, wallTop);
+      ctx.quadraticCurveTo(W / 2, wallTop - H * 0.018, W, wallTop);
+      ctx.lineTo(W, wallTop + wallH);
+      ctx.quadraticCurveTo(W / 2, wallTop - H * 0.018 + wallH, 0, wallTop + wallH);
+      ctx.closePath();
+      ctx.fill();
+      // Yellow home-run line on top of wall
+      ctx.fillStyle = '#ffd23a';
+      ctx.beginPath();
+      ctx.moveTo(0, wallTop);
+      ctx.quadraticCurveTo(W / 2, wallTop - H * 0.018, W, wallTop);
+      ctx.lineTo(W, wallTop + 3);
+      ctx.quadraticCurveTo(W / 2, wallTop - H * 0.018 + 3, 0, wallTop + 3);
+      ctx.closePath();
+      ctx.fill();
+
+      // ---- Outfield grass with perspective mowing stripes ----
+      const grassTop = wallTop + wallH;
+      const grassGrad = ctx.createLinearGradient(0, grassTop, 0, H);
+      grassGrad.addColorStop(0, '#2c6a28');
+      grassGrad.addColorStop(1, '#173f15');
+      ctx.fillStyle = grassGrad;
+      ctx.fillRect(0, grassTop, W, H - grassTop);
+
+      // Mow stripes — bands thicken toward foreground (perspective)
+      let y = grassTop, band = 0;
+      while (y < H) {
+        const t = (y - grassTop) / (H - grassTop);
+        const thickness = 6 + t * t * 95;
+        if (band % 2 === 0) {
+          ctx.fillStyle = `rgba(255,255,255,${0.035 + t * 0.05})`;
+          ctx.fillRect(0, y, W, thickness);
+        }
+        y += thickness;
+        band++;
+      }
+
+      // ---- Infield dirt diamond (foreshortened) ----
+      ctx.fillStyle = '#b07440';
+      ctx.beginPath();
+      ctx.moveTo(homeX, homeY);
+      ctx.lineTo(firstX, firstY);
+      ctx.lineTo(moundX, moundY + 22);
+      ctx.lineTo(thirdX, thirdY);
+      ctx.closePath();
+      ctx.fill();
+      // Slight darker shading at the back of the diamond
+      const diaShade = ctx.createLinearGradient(0, moundY, 0, homeY);
+      diaShade.addColorStop(0, 'rgba(0,0,0,0.25)');
+      diaShade.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = diaShade;
+      ctx.beginPath();
+      ctx.moveTo(homeX, homeY);
+      ctx.lineTo(firstX, firstY);
+      ctx.lineTo(moundX, moundY + 22);
+      ctx.lineTo(thirdX, thirdY);
+      ctx.closePath();
+      ctx.fill();
+
+      // ---- Foul lines (chalk) converging to horizon ----
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(homeX, homeY);
+      ctx.lineTo(W * 0.985, grassTop + 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(homeX, homeY);
+      ctx.lineTo(W * 0.015, grassTop + 2);
+      ctx.stroke();
+
+      // ---- Basepaths (chalk diamond outline) ----
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(homeX, homeY);
+      ctx.lineTo(firstX, firstY);
+      ctx.lineTo(moundX, moundY + 22);
+      ctx.lineTo(thirdX, thirdY);
+      ctx.closePath();
+      ctx.stroke();
+
+      // Base bags
+      ctx.fillStyle = '#f0f0f0';
+      [[firstX, firstY], [thirdX, thirdY], [moundX, moundY + 22]].forEach(([bx, by]) => {
+        ctx.fillRect(bx - 5, by - 4, 10, 6);
+      });
+
+      // ---- Pitcher's mound (small, with shadow) ----
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.beginPath();
+      ctx.ellipse(moundX + 4, moundY + 14, 38, 7, 0, 0, 2 * Math.PI);
+      ctx.fill();
+      const moundGrad = ctx.createRadialGradient(moundX - 6, moundY + 8, 4, moundX, moundY + 12, 40);
+      moundGrad.addColorStop(0, '#a87038');
+      moundGrad.addColorStop(1, '#7a4a20');
+      ctx.fillStyle = moundGrad;
+      ctx.beginPath();
+      ctx.ellipse(moundX, moundY + 12, 36, 8, 0, 0, 2 * Math.PI);
+      ctx.fill();
+      // Pitching rubber
+      ctx.fillStyle = '#f4f4f4';
+      ctx.fillRect(moundX - 8, moundY + 10, 16, 2);
+
+      // ---- Home plate (foreground pentagon) ----
+      ctx.fillStyle = '#f5f5f5';
+      ctx.beginPath();
+      ctx.moveTo(homeX - 32, homeY - 8);
+      ctx.lineTo(homeX + 32, homeY - 8);
+      ctx.lineTo(homeX + 22, homeY + 6);
+      ctx.lineTo(homeX,      homeY + 18);
+      ctx.lineTo(homeX - 22, homeY + 6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // ---- Batter's box (faint chalk rectangles either side of plate) ----
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(homeX - 90, homeY - 18, 50, 40);
+      ctx.strokeRect(homeX + 40, homeY - 18, 50, 40);
+    }
+
+    function drawPitcher(cx, cy, lean) {
+      // Cast shadow on mound (stays put even as the pitcher leans)
+      ctx.fillStyle = 'rgba(0,0,0,0.32)';
+      ctx.beginPath();
+      ctx.ellipse(cx + 3, cy + 9, 14, 3.5, 0, 0, 2 * Math.PI);
+      ctx.fill();
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(lean * 0.35);
+
+      // Legs (stance: one slightly forward)
+      ctx.fillStyle = '#3a2410';
+      ctx.fillRect(-5, -1, 4, 11);
+      ctx.fillRect( 1, -1, 4, 11);
+
+      // Body with lit/shaded sides (light from upper-right)
+      const bodyGrad = ctx.createLinearGradient(-10, 0, 10, 0);
+      bodyGrad.addColorStop(0, '#5e3a18');
+      bodyGrad.addColorStop(1, '#b07a3c');
+      ctx.fillStyle = bodyGrad;
+      ctx.beginPath();
+      ctx.ellipse(0, -7, 8, 11, 0, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // Jersey number patch
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.font = 'bold 7px -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('7', 0, -7);
+
+      // Pitching arm (right), comes forward as the lean releases
+      const armPhase = -lean; // arm whips forward as body leans forward (lean>0)
+      ctx.strokeStyle = '#7a5028';
+      ctx.lineWidth = 3.2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(6, -10);
+      ctx.lineTo(10 + armPhase * 8, -14 + armPhase * 10);
+      ctx.stroke();
+
+      // Glove (left hand)
+      ctx.fillStyle = '#241208';
+      ctx.beginPath();
+      ctx.ellipse(-9, -9, 3.2, 4, 0.2, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // Head — slightly tilted forward
+      const headGrad = ctx.createLinearGradient(-7, -22, 7, -22);
+      headGrad.addColorStop(0, '#6b431c');
+      headGrad.addColorStop(1, '#bb8044');
+      ctx.fillStyle = headGrad;
+      ctx.beginPath();
+      ctx.arc(0, -20, 6.5, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // Floppy ears
+      ctx.fillStyle = '#3a2410';
+      ctx.beginPath();
+      ctx.ellipse(-6, -20, 2.4, 5, -0.35, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse( 6, -20, 2.4, 5,  0.35, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // Snout + nose
+      ctx.fillStyle = '#7a5028';
+      ctx.beginPath();
+      ctx.ellipse(0, -17.5, 2.4, 1.8, 0, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.fillStyle = '#111';
+      ctx.beginPath();
+      ctx.arc(0, -18.3, 0.9, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // Baseball cap (brim + crown)
+      ctx.fillStyle = '#c63232';
+      ctx.beginPath();
+      ctx.arc(0, -23, 6.5, Math.PI, 2 * Math.PI);
+      ctx.fill();
+      ctx.fillRect(0, -23, 7, 1.6);
+      // Cap shading
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.beginPath();
+      ctx.arc(-2.5, -23, 6.5, Math.PI, Math.PI * 1.4);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    function drawStrikeZone() {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 6]);
+      ctx.strokeRect(W * 0.44, H * 0.58, W * 0.12, H * 0.18);
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+
+    function drawBall() {
+      if (!game.ball.active && !game.ball.hit) return;
+      const r = Math.max(2.5, 6 + 22 * game.ball.z);
+      // shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.28)';
+      ctx.beginPath();
+      ctx.ellipse(game.ball.x, H * 0.94, r * 0.9, r * 0.32, 0, 0, 2 * Math.PI);
+      ctx.fill();
+      // ball
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(game.ball.x, game.ball.y, r, 0, 2 * Math.PI);
+      ctx.fill();
+      // stitching
+      ctx.strokeStyle = '#c33';
+      ctx.lineWidth = Math.max(1, r * 0.18);
+      ctx.beginPath();
+      ctx.arc(game.ball.x - r * 0.35, game.ball.y, r * 0.75, -Math.PI * 0.35, Math.PI * 0.35);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(game.ball.x + r * 0.35, game.ball.y, r * 0.75, Math.PI * 0.65, Math.PI * 1.35);
+      ctx.stroke();
+      // highlight
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.beginPath();
+      ctx.arc(game.ball.x - r * 0.4, game.ball.y - r * 0.4, r * 0.25, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+
+    function drawParticles() {
+      for (const p of game.particles) {
+        const a = 1 - p.t / p.life;
+        ctx.fillStyle = `rgba(255, 220, 110, ${a.toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3.5, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    }
+
+    function drawBat() {
+      const info = batTipInfo();
+      const L = info.L;
+
+      // Motion-blur ghosts during the active swing window
+      if (game.bat.swinging) {
+        const tNow = game.bat.swingT / 0.32;
+        if (tNow > 0.15 && tNow < 0.85) {
+          for (let i = 1; i <= 3; i++) {
+            const back = clamp(tNow - i * 0.04, 0, 1);
+            const p = PIVOT();
+            const theta = Math.atan2(game.bat.y - p.y, game.bat.x - p.x)
+                        + lerp(0.75, -0.75, easeOutCubic(back));
+            drawBatShape(p.x, p.y, theta, L, 0.18 - i * 0.04);
+          }
+        }
+      }
+
+      drawBatShape(info.px, info.py, info.theta, L, 1);
+    }
+
+    function drawBatShape(px, py, theta, L, alpha) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.translate(px, py);
+      ctx.rotate(theta);
+      // Tapered bat: thin handle, thick barrel
+      const grad = ctx.createLinearGradient(0, 0, L, 0);
+      grad.addColorStop(0, '#6b3f1c');
+      grad.addColorStop(0.6, '#a16a34');
+      grad.addColorStop(1, '#c98a4d');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(0, -5);
+      ctx.lineTo(L * 0.55, -8);
+      ctx.lineTo(L, -14);
+      ctx.lineTo(L, 14);
+      ctx.lineTo(L * 0.55, 8);
+      ctx.lineTo(0, 5);
+      ctx.closePath();
+      ctx.fill();
+      // Grip
+      ctx.fillStyle = '#1c1c1c';
+      ctx.fillRect(0, -7, L * 0.18, 14);
+      // Shine
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      ctx.fillRect(L * 0.2, -3, L * 0.7, 2);
+      ctx.restore();
+    }
+
+    function drawReticle() {
+      if (game.mode === 'bat' && game.bat.swinging) return;
+      const isPitch = game.mode === 'pitch';
+      const color = isPitch ? 'rgba(255, 180, 70, 0.9)' : 'rgba(255,255,255,0.55)';
+      const radius = isPitch ? 26 : 22;
+      const ax = game.aim.x, ay = game.aim.y;
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = isPitch ? 2.2 : 1.5;
+      ctx.beginPath();
+      ctx.arc(ax, ay, radius, 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(ax - 8, ay);
+      ctx.lineTo(ax + 8, ay);
+      ctx.moveTo(ax, ay - 8);
+      ctx.lineTo(ax, ay + 8);
+      ctx.stroke();
+      if (isPitch) {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(ax, ay, 2.5, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    function drawHUD() {
+      const boxW = 168, boxH = 84;
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.fillRect(W - boxW - 12, 10, boxW, boxH);
+      // Mode badge
+      const isPitch = game.mode === 'pitch';
+      ctx.fillStyle = isPitch ? '#ffb347' : '#74c0fc';
+      ctx.font = 'bold 12px -apple-system, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(isPitch ? 'MODE: PITCHING' : 'MODE: BATTING', W - boxW, 18);
+      ctx.fillStyle = '#fff';
+      ctx.font = '13px -apple-system, sans-serif';
+      ctx.fillText(`Hits:    ${game.score.hits}`,    W - boxW, 36);
+      ctx.fillText(`Strikes: ${game.score.strikes}`, W - boxW, 54);
+      if (isPitch) {
+        ctx.fillText(`Balls:   ${game.score.balls}`, W - boxW, 72);
+      } else {
+        ctx.fillText(`Whiffs:  ${game.score.whiffs}`, W - boxW, 72);
+      }
+    }
+
+    function drawMessage() {
+      const m = game.message;
+      if (!m.text) return;
+      let a = 1;
+      if (!m.persist) {
+        const ttl = m.ttl || 1.2;
+        a = clamp(1 - (m.t - ttl * 0.6) / (ttl * 0.4), 0, 1);
+        if (a <= 0) return;
+      }
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.fillStyle = m.color;
+      ctx.font = `bold ${Math.floor(Math.min(W, H) * 0.07)}px -apple-system, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(0,0,0,0.5)';
+      ctx.shadowBlur = 12;
+      ctx.fillText(m.text, W / 2, H * 0.28);
+      ctx.restore();
+    }
+
+    // ---------- Loop ----------
+    let last = performance.now();
+    function frame(now) {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      update(dt);
+      render();
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  })();
+  </script>
+</body>
+</html>

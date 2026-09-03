@@ -1,0 +1,1158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>One Bar Math</title>
+  <style>
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      height: 100%;
+      font-family: Arial, sans-serif;
+      background: #ffffff;
+      color: #111;
+    }
+
+    .top-bar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      background: #1a1a40;
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      z-index: 10;
+    }
+
+    .top-bar .brand {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+
+    .top-bar .right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .clearance-pill {
+      font-size: 13px;
+      font-weight: 700;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.16);
+      display: none;
+    }
+
+    .clearance-pill.active {
+      display: inline-block;
+    }
+
+    .top-bar .login,
+    .top-bar .logout {
+      font-size: 15px;
+      font-weight: 600;
+      padding: 8px 14px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.12);
+      cursor: pointer;
+      user-select: none;
+      border: none;
+      color: #fff;
+      font-family: inherit;
+    }
+
+    .top-bar .login:hover,
+    .top-bar .logout:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .top-bar .logout { display: none; }
+    .top-bar .logout.active { display: inline-block; }
+
+    .screen {
+      padding: 80px 24px 40px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    /* Modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+    }
+    .modal-backdrop.open { display: flex; }
+
+    .modal {
+      width: 100%;
+      max-width: 360px;
+      background: #fff;
+      border-radius: 14px;
+      padding: 22px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+    }
+    .modal h2 { margin: 0 0 6px 0; font-size: 20px; }
+    .modal p.sub { margin: 0 0 16px 0; color: #555; font-size: 14px; }
+    .modal input {
+      width: 100%;
+      padding: 12px 14px;
+      font-size: 15px;
+      border: 1px solid #ccc;
+      border-radius: 10px;
+      outline: none;
+    }
+    .modal input:focus { border-color: #1a1a40; }
+    .modal .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .modal button {
+      border: none;
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .btn-cancel { background: #eee; color: #222; }
+    .btn-submit { background: #1a1a40; color: #fff; }
+    .modal .msg {
+      margin-top: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      min-height: 20px;
+    }
+    .msg.ok { color: #117a3d; }
+    .msg.err { color: #b00020; }
+
+    /* Panels */
+    .panel {
+      background: #fff;
+      border: 1px solid #e3e3ec;
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .panel h3 {
+      margin: 0 0 4px 0;
+      font-size: 18px;
+    }
+    .panel .hint {
+      color: #555;
+      font-size: 13px;
+      margin: 0 0 14px 0;
+    }
+
+    .proxy-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .proxy-row input[type="text"] {
+      flex: 1 1 320px;
+      min-width: 0;
+      padding: 10px 12px;
+      font-size: 14px;
+      border: 1px solid #ccc;
+      border-radius: 10px;
+      outline: none;
+    }
+    .proxy-row input[type="text"]:focus { border-color: #1a1a40; }
+    .proxy-row button {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 10px;
+      background: #1a1a40;
+      color: #fff;
+      font-weight: 700;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .proxy-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .mode-toggle {
+      margin-top: 10px;
+      display: flex;
+      gap: 8px;
+      font-size: 13px;
+      color: #444;
+    }
+    .mode-toggle label {
+      display: inline-flex;
+      gap: 4px;
+      align-items: center;
+      cursor: pointer;
+    }
+
+    .result-meta {
+      margin-top: 14px;
+      font-size: 13px;
+      color: #333;
+      background: #f4f4fb;
+      padding: 8px 12px;
+      border-radius: 8px;
+      display: none;
+    }
+    .result-meta.active { display: block; }
+
+    .result-box {
+      margin-top: 10px;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      overflow: hidden;
+      display: none;
+    }
+    .result-box.active { display: block; }
+
+    .result-box pre {
+      margin: 0;
+      padding: 14px;
+      max-height: 480px;
+      overflow: auto;
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #0f1024;
+      color: #d8dcff;
+    }
+    .result-box iframe {
+      width: 100%;
+      height: 520px;
+      border: 0;
+      background: #fff;
+    }
+
+    .proxy-error {
+      margin-top: 12px;
+      color: #b00020;
+      font-weight: 700;
+      font-size: 14px;
+      display: none;
+    }
+    .proxy-error.active { display: block; }
+
+    /* Blocklist editor */
+    .blocklist-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+    .blocklist-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 220px;
+      overflow: auto;
+      border: 1px solid #e3e3ec;
+      border-radius: 10px;
+      padding: 8px;
+      background: #fafaff;
+    }
+    .blocklist-list .empty {
+      color: #888;
+      font-style: italic;
+      font-size: 13px;
+      padding: 6px;
+    }
+    .blocklist-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 10px;
+      background: #fff;
+      border: 1px solid #e3e3ec;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    .blocklist-item button {
+      background: transparent;
+      border: none;
+      color: #b00020;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 13px;
+    }
+    .add-row {
+      display: flex;
+      gap: 8px;
+    }
+    .add-row input {
+      flex: 1;
+      padding: 8px 10px;
+      font-size: 14px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      outline: none;
+    }
+    .add-row input:focus { border-color: #1a1a40; }
+    .add-row button {
+      padding: 8px 14px;
+      border: none;
+      border-radius: 8px;
+      background: #1a1a40;
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .siv-note {
+      margin-top: 8px;
+      font-size: 12.5px;
+      color: #555;
+    }
+    .siv-note code {
+      background: #f0f0f6;
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
+    /* Bar-model practice */
+    .bar-panel h3 { margin-bottom: 4px; }
+    .bar-stage {
+      display: flex;
+      justify-content: center;
+      margin: 18px 0 6px;
+    }
+    .bar-svg {
+      width: 100%;
+      max-width: 640px;
+      height: 90px;
+      display: block;
+    }
+    .question-text {
+      text-align: center;
+      font-size: 18px;
+      font-weight: 700;
+      margin: 14px 0 4px;
+      color: #1a1a40;
+    }
+    .answer-row {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+    .answer-row input {
+      width: 180px;
+      padding: 10px 12px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 10px;
+      outline: none;
+      text-align: center;
+    }
+    .answer-row input:focus { border-color: #1a1a40; }
+    .answer-row button {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 10px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 14px;
+    }
+    .btn-check { background: #1a1a40; color: #fff; }
+    .btn-next  { background: #eee; color: #222; }
+    .feedback {
+      min-height: 22px;
+      text-align: center;
+      margin-top: 10px;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .feedback.ok  { color: #117a3d; }
+    .feedback.err { color: #b00020; }
+    .score {
+      text-align: center;
+      font-size: 13px;
+      color: #555;
+      margin-top: 4px;
+    }
+    .qtype-row {
+      display: flex;
+      justify-content: center;
+      gap: 14px;
+      font-size: 13px;
+      color: #444;
+      margin-top: 4px;
+    }
+    .qtype-row label {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+    }
+
+    /* AI chat */
+    .chat-log {
+      border: 1px solid #e3e3ec;
+      border-radius: 10px;
+      background: #fafaff;
+      padding: 10px;
+      height: 280px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .chat-empty {
+      color: #888;
+      font-style: italic;
+      font-size: 13px;
+      margin: auto;
+    }
+    .chat-msg {
+      padding: 8px 12px;
+      border-radius: 10px;
+      max-width: 80%;
+      font-size: 14px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      line-height: 1.4;
+    }
+    .chat-msg.user {
+      align-self: flex-end;
+      background: #1a1a40;
+      color: #fff;
+    }
+    .chat-msg.assistant {
+      align-self: flex-start;
+      background: #fff;
+      color: #111;
+      border: 1px solid #e3e3ec;
+    }
+    .chat-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .chat-row input {
+      flex: 1;
+      padding: 10px 12px;
+      font-size: 14px;
+      border: 1px solid #ccc;
+      border-radius: 10px;
+      outline: none;
+    }
+    .chat-row input:focus { border-color: #1a1a40; }
+    .chat-row button {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 10px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .btn-send  { background: #1a1a40; color: #fff; }
+    .btn-clear { background: #eee; color: #222; }
+    .ai-status {
+      margin-top: 6px;
+      font-size: 12.5px;
+      color: #555;
+      min-height: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="top-bar">
+    <div class="brand">One Bar Math</div>
+    <div class="right">
+      <div class="clearance-pill" id="clearancePill"></div>
+      <button class="login" id="loginBtn">Security Clearance Login</button>
+      <button class="logout" id="logoutBtn">Sign out</button>
+    </div>
+  </div>
+
+  <div class="screen">
+    <!-- Bar-model practice: always visible, no login required -->
+    <div class="panel bar-panel" id="barPanel">
+      <h3>Bar Model Practice</h3>
+      <p class="hint">
+        Look at the bar. Answer the question. The bar's whole length is
+        always "one whole."
+      </p>
+      <div class="qtype-row">
+        <label><input type="radio" name="qtype" value="mixed" checked /> Mixed</label>
+        <label><input type="radio" name="qtype" value="fraction" /> Fraction</label>
+        <label><input type="radio" name="qtype" value="percent" /> Percent</label>
+        <label><input type="radio" name="qtype" value="quantity" /> Quantity</label>
+      </div>
+      <div class="bar-stage">
+        <svg id="barSvg" class="bar-svg" viewBox="0 0 640 90" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="question-text" id="barQuestion"></div>
+      <div class="answer-row">
+        <input id="barAnswer" type="text" placeholder="your answer" autocomplete="off" />
+        <button class="btn-check" id="barCheck">Check</button>
+        <button class="btn-next" id="barNext">New problem</button>
+      </div>
+      <div class="feedback" id="barFeedback"></div>
+      <div class="score" id="barScore">Correct: 0 / Attempted: 0</div>
+    </div>
+
+    <!-- AI chat: visible at Level III and up -->
+    <div class="panel" id="aiPanel" style="display:none;">
+      <h3>AI Helper (Level III+)</h3>
+      <p class="hint">
+        Ask the AI a question. Useful for math help or explanations.
+        Conversation stays on this page only.
+      </p>
+      <div class="chat-log" id="chatLog">
+        <div class="chat-empty">No messages yet. Say hello!</div>
+      </div>
+      <div class="chat-row">
+        <input id="aiInput" type="text" placeholder="Ask anything..." autocomplete="off" />
+        <button class="btn-send" id="aiSend">Send</button>
+        <button class="btn-clear" id="aiClear">Clear</button>
+      </div>
+      <div class="ai-status" id="aiStatus"></div>
+    </div>
+
+    <!-- Proxy panel: visible at Level II and up -->
+    <div class="panel" id="proxyPanel" style="display:none;">
+      <h3>Proxy Fetcher</h3>
+      <p class="hint">
+        Enter a URL. The server fetches it for you, so the page is delivered
+        to your browser without your browser ever connecting to the site.
+        This is what a proxy does.
+      </p>
+      <div class="proxy-row">
+        <input id="proxyUrl" type="text" placeholder="https://en.wikipedia.org/wiki/Proxy_server" />
+        <button id="proxyGo">Fetch</button>
+      </div>
+      <div class="mode-toggle">
+        <label><input type="radio" name="mode" value="render" checked /> Render</label>
+        <label><input type="radio" name="mode" value="raw" /> Raw response</label>
+      </div>
+      <div class="result-meta" id="proxyMeta"></div>
+      <div class="proxy-error" id="proxyError"></div>
+      <div class="result-box" id="proxyResult"></div>
+    </div>
+
+    <!-- Blocklist panel: visible only at Level SIV -->
+    <div class="panel" id="blocklistPanel" style="display:none;">
+      <h3>Blocklist (SIV only)</h3>
+      <p class="hint">
+        Hostnames listed here cannot be fetched through the proxy. Matches
+        the exact host or any subdomain (e.g. <code>youtube.com</code> blocks
+        <code>www.youtube.com</code> and <code>m.youtube.com</code>).
+      </p>
+      <div class="blocklist-grid">
+        <div class="blocklist-list" id="blocklistList"></div>
+        <div class="add-row">
+          <input id="blockInput" type="text" placeholder="e.g. youtube.com" />
+          <button id="blockAdd">Add</button>
+        </div>
+      </div>
+      <p class="siv-note" id="blockMsg"></p>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal">
+      <h2>Security Clearance Login</h2>
+      <p class="sub">Enter your clearance password.</p>
+      <input id="pwInput" type="text" placeholder="Password" autocomplete="off" />
+      <div class="msg" id="msg"></div>
+      <div class="actions">
+        <button class="btn-cancel" id="cancelBtn">Cancel</button>
+        <button class="btn-submit" id="submitBtn">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const PASSWORDS = {
+      "QUAS@ARMT": "SIV",
+      "ZAFFAZ@13": "III",
+      "RAC@E@CAR": "II",
+      "BAS@IS":    "I"
+    };
+    // Levels that may use the proxy.
+    const PROXY_LEVELS = new Set(["II", "III", "SIV"]);
+
+    // Session state. Password is kept in memory only so the proxy/blocklist
+    // endpoints can re-authenticate; it is never persisted.
+    let session = { password: null, level: null };
+
+    const loginBtn = document.getElementById("loginBtn");
+    const logoutBtn = document.getElementById("logoutBtn");
+    const modalBackdrop = document.getElementById("modalBackdrop");
+    const pwInput = document.getElementById("pwInput");
+    const msg = document.getElementById("msg");
+    const cancelBtn = document.getElementById("cancelBtn");
+    const submitBtn = document.getElementById("submitBtn");
+    const clearancePill = document.getElementById("clearancePill");
+
+    const proxyPanel = document.getElementById("proxyPanel");
+    const proxyUrl = document.getElementById("proxyUrl");
+    const proxyGo = document.getElementById("proxyGo");
+    const proxyMeta = document.getElementById("proxyMeta");
+    const proxyError = document.getElementById("proxyError");
+    const proxyResult = document.getElementById("proxyResult");
+
+    const blocklistPanel = document.getElementById("blocklistPanel");
+    const blocklistList = document.getElementById("blocklistList");
+    const blockInput = document.getElementById("blockInput");
+    const blockAdd = document.getElementById("blockAdd");
+    const blockMsg = document.getElementById("blockMsg");
+
+    const aiPanel = document.getElementById("aiPanel");
+    const chatLog = document.getElementById("chatLog");
+    const aiInput = document.getElementById("aiInput");
+    const aiSend = document.getElementById("aiSend");
+    const aiClear = document.getElementById("aiClear");
+    const aiStatus = document.getElementById("aiStatus");
+
+    const barSvg = document.getElementById("barSvg");
+    const barQuestion = document.getElementById("barQuestion");
+    const barAnswer = document.getElementById("barAnswer");
+    const barCheck = document.getElementById("barCheck");
+    const barNext = document.getElementById("barNext");
+    const barFeedback = document.getElementById("barFeedback");
+    const barScore = document.getElementById("barScore");
+
+    function openModal() {
+      modalBackdrop.classList.add("open");
+      pwInput.value = "";
+      msg.textContent = "";
+      msg.className = "msg";
+      setTimeout(() => pwInput.focus(), 50);
+    }
+    function closeModal() { modalBackdrop.classList.remove("open"); }
+
+    function applyLevel(level, pw) {
+      session.level = level;
+      session.password = pw;
+      clearancePill.textContent = `Clearance: Level ${level}`;
+      clearancePill.classList.add("active");
+      logoutBtn.classList.add("active");
+      loginBtn.textContent = "Switch user";
+
+      proxyPanel.style.display = PROXY_LEVELS.has(level) ? "block" : "none";
+      blocklistPanel.style.display = (level === "SIV") ? "block" : "none";
+      aiPanel.style.display = (level === "III" || level === "SIV") ? "block" : "none";
+      if (level === "SIV") refreshBlocklist();
+    }
+
+    function signOut() {
+      session = { password: null, level: null };
+      clearancePill.classList.remove("active");
+      clearancePill.textContent = "";
+      logoutBtn.classList.remove("active");
+      loginBtn.textContent = "Security Clearance Login";
+      proxyPanel.style.display = "none";
+      blocklistPanel.style.display = "none";
+      aiPanel.style.display = "none";
+      proxyMeta.classList.remove("active");
+      proxyResult.classList.remove("active");
+      proxyError.classList.remove("active");
+      proxyResult.innerHTML = "";
+    }
+
+    function attempt() {
+      const pw = pwInput.value;
+      const level = PASSWORDS[pw];
+
+      if (level) {
+        msg.textContent = `Access granted. Security Clearance Level ${level}.`;
+        msg.className = "msg ok";
+        applyLevel(level, pw);
+        setTimeout(closeModal, 700);
+      } else {
+        msg.textContent = "Access denied. Invalid password.";
+        msg.className = "msg err";
+      }
+    }
+
+    loginBtn.addEventListener("click", openModal);
+    logoutBtn.addEventListener("click", signOut);
+    cancelBtn.addEventListener("click", closeModal);
+    submitBtn.addEventListener("click", attempt);
+
+    pwInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") attempt();
+      if (e.key === "Escape") closeModal();
+    });
+
+    modalBackdrop.addEventListener("click", (e) => {
+      if (e.target === modalBackdrop) closeModal();
+    });
+
+    // --- Proxy ------------------------------------------------------------
+    function selectedMode() {
+      const r = document.querySelector('input[name="mode"]:checked');
+      return r ? r.value : "render";
+    }
+
+    function showProxyError(text) {
+      proxyError.textContent = text;
+      proxyError.classList.add("active");
+      proxyMeta.classList.remove("active");
+      proxyResult.classList.remove("active");
+      proxyResult.innerHTML = "";
+    }
+
+    function renderProxyResult(data) {
+      proxyError.classList.remove("active");
+      proxyMeta.innerHTML =
+        `<b>${data.status} ${data.statusText || ""}</b> &middot; ` +
+        `${escapeHtml(data.contentType || "unknown")} &middot; ` +
+        `${data.bytes.toLocaleString()} bytes` +
+        (data.truncated ? " (truncated)" : "") +
+        ` &middot; final URL: <code>${escapeHtml(data.finalUrl)}</code>`;
+      proxyMeta.classList.add("active");
+
+      const isHtml = /text\/html|application\/xhtml/i.test(data.contentType || "");
+      const mode = selectedMode();
+
+      if (mode === "render" && isHtml) {
+        const iframe = document.createElement("iframe");
+        // allow-scripts lets our injected click-interceptor run.
+        // We deliberately omit allow-same-origin and allow-top-navigation
+        // so the fetched page can't escape the proxy.
+        iframe.sandbox = "allow-scripts";
+        iframe.srcdoc = buildSrcdoc(data.body, data.finalUrl);
+        proxyResult.innerHTML = "";
+        proxyResult.appendChild(iframe);
+      } else {
+        const pre = document.createElement("pre");
+        pre.textContent = data.body;
+        proxyResult.innerHTML = "";
+        proxyResult.appendChild(pre);
+      }
+      proxyResult.classList.add("active");
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    // Build the iframe document: inject <base> so relative links resolve
+    // against the upstream URL, plus a small script that catches link
+    // clicks AND form submissions and asks the parent page to fetch through
+    // the proxy again.
+    function buildSrcdoc(html, finalUrl) {
+      const safeBase = escapeHtml(finalUrl || "");
+      const injection =
+        '<base href="' + safeBase + '">' +
+        '<script>(function(){' +
+          // Click → re-fetch through proxy
+          'document.addEventListener("click",function(e){' +
+            'var el=e.target;' +
+            'while(el && el.nodeName!=="A") el=el.parentElement;' +
+            'if(!el) return;' +
+            'var raw=el.getAttribute("href")||"";' +
+            'if(!raw) return;' +
+            'if(raw.charAt(0)==="#") return;' +
+            'if(raw.toLowerCase().indexOf("javascript:")===0) return;' +
+            'if(raw.toLowerCase().indexOf("mailto:")===0) return;' +
+            'e.preventDefault();' +
+            'parent.postMessage({type:"proxy-navigate",url:el.href},"*");' +
+          '},true);' +
+          // Form submit (GET only) → build query string and proxy it
+          'document.addEventListener("submit",function(e){' +
+            'var form=e.target;' +
+            'if(!form||form.nodeName!=="FORM") return;' +
+            'var method=(form.getAttribute("method")||"GET").toUpperCase();' +
+            'e.preventDefault();' +
+            'if(method!=="GET"){' +
+              'parent.postMessage({type:"proxy-info",msg:"This form uses POST, which the proxy demo does not support yet."},"*");' +
+              'return;' +
+            '}' +
+            'var data=new FormData(form);' +
+            'var pairs=[];' +
+            'data.forEach(function(v,k){' +
+              'pairs.push(encodeURIComponent(k)+"="+encodeURIComponent(v));' +
+            '});' +
+            'var action=form.getAttribute("action")||location.href;' +
+            'var u=new URL(action,location.href);' +
+            'u.search=pairs.length?("?"+pairs.join("&")):"";' +
+            'parent.postMessage({type:"proxy-navigate",url:u.toString()},"*");' +
+          '},true);' +
+        '})();<\/script>';
+
+      const headOpen = html.match(/<head\b[^>]*>/i);
+      if (headOpen) {
+        const idx = headOpen.index + headOpen[0].length;
+        return html.slice(0, idx) + injection + html.slice(idx);
+      }
+      // No <head>? Just prepend.
+      return injection + html;
+    }
+
+    // Listen for navigation requests from the sandboxed iframe.
+    window.addEventListener("message", (e) => {
+      const d = e.data;
+      if (!d || typeof d !== "object") return;
+      if (d.type === "proxy-navigate" && typeof d.url === "string") {
+        proxyUrl.value = d.url;
+        doProxyFetch();
+        // Scroll the result back into view since the iframe replacement
+        // can be jarring.
+        proxyPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else if (d.type === "proxy-info" && typeof d.msg === "string") {
+        showProxyError(d.msg);
+      }
+    });
+
+    async function doProxyFetch() {
+      const url = proxyUrl.value.trim();
+      if (!url) return;
+      if (!session.password) {
+        showProxyError("Sign in first.");
+        return;
+      }
+      proxyGo.disabled = true;
+      proxyError.classList.remove("active");
+      proxyMeta.textContent = "Fetching…";
+      proxyMeta.classList.add("active");
+      proxyResult.classList.remove("active");
+      proxyResult.innerHTML = "";
+
+      try {
+        const res = await fetch("/api/proxy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: session.password, url }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showProxyError(data.error || `Request failed (${res.status}).`);
+        } else {
+          renderProxyResult(data);
+        }
+      } catch (err) {
+        showProxyError(
+          "Could not reach the proxy server. Make sure you opened this page " +
+          "via `npm start` (e.g. http://localhost:3000/one-bar-math.html), not " +
+          "as a file:// URL."
+        );
+      } finally {
+        proxyGo.disabled = false;
+      }
+    }
+
+    proxyGo.addEventListener("click", doProxyFetch);
+    proxyUrl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doProxyFetch();
+    });
+    document.querySelectorAll('input[name="mode"]').forEach((r) => {
+      r.addEventListener("change", () => {
+        // Re-render last result with the new mode if there is one.
+        if (lastResult) renderProxyResult(lastResult);
+      });
+    });
+
+    // Cache the most recent result so the Render/Raw toggle can re-render.
+    let lastResult = null;
+    const _origRender = renderProxyResult;
+    renderProxyResult = function (data) {
+      lastResult = data;
+      _origRender(data);
+    };
+
+    // --- Blocklist (SIV) --------------------------------------------------
+    async function refreshBlocklist() {
+      blockMsg.textContent = "";
+      try {
+        const res = await fetch("/api/blocklist");
+        const data = await res.json();
+        drawBlocklist(data.blocklist || []);
+      } catch {
+        blockMsg.textContent = "Could not load blocklist (is the server running?).";
+      }
+    }
+
+    function drawBlocklist(list) {
+      blocklistList.innerHTML = "";
+      if (list.length === 0) {
+        const div = document.createElement("div");
+        div.className = "empty";
+        div.textContent = "No hosts blocked yet.";
+        blocklistList.appendChild(div);
+        return;
+      }
+      list.forEach((host) => {
+        const row = document.createElement("div");
+        row.className = "blocklist-item";
+        const span = document.createElement("span");
+        span.textContent = host;
+        const btn = document.createElement("button");
+        btn.textContent = "Remove";
+        btn.addEventListener("click", () => saveBlocklist(list.filter((h) => h !== host)));
+        row.appendChild(span);
+        row.appendChild(btn);
+        blocklistList.appendChild(row);
+      });
+    }
+
+    async function saveBlocklist(next) {
+      if (session.level !== "SIV") return;
+      blockMsg.textContent = "Saving…";
+      try {
+        const res = await fetch("/api/blocklist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: session.password, blocklist: next }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          blockMsg.textContent = data.error || "Could not save blocklist.";
+        } else {
+          drawBlocklist(data.blocklist);
+          blockMsg.textContent = "Saved.";
+        }
+      } catch {
+        blockMsg.textContent = "Network error.";
+      }
+    }
+
+    blockAdd.addEventListener("click", () => {
+      const host = blockInput.value.trim().toLowerCase();
+      if (!host) return;
+      // Append to whatever is currently displayed.
+      const existing = Array.from(blocklistList.querySelectorAll(".blocklist-item span"))
+        .map((s) => s.textContent);
+      if (existing.includes(host)) {
+        blockMsg.textContent = `${host} is already on the list.`;
+        return;
+      }
+      saveBlocklist([...existing, host]);
+      blockInput.value = "";
+    });
+    blockInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") blockAdd.click();
+    });
+
+    // --- Bar-model practice ---------------------------------------------
+    const barState = {
+      segments: 0,
+      shaded: 0,
+      type: "fraction",
+      whole: 0,
+      attempts: 0,
+      correct: 0,
+    };
+
+    function gcd(a, b) { return b === 0 ? a : gcd(b, a % b); }
+
+    function selectedQType() {
+      const r = document.querySelector('input[name="qtype"]:checked');
+      return r ? r.value : "mixed";
+    }
+
+    function newProblem() {
+      const choice = selectedQType();
+      const type = (choice === "mixed")
+        ? ["fraction", "percent", "quantity"][Math.floor(Math.random() * 3)]
+        : choice;
+
+      const segments = 4 + Math.floor(Math.random() * 7); // 4..10
+      const shaded = 1 + Math.floor(Math.random() * (segments - 1));
+      barState.segments = segments;
+      barState.shaded = shaded;
+      barState.type = type;
+
+      if (type === "fraction") {
+        barQuestion.textContent = "What fraction of the bar is shaded?";
+      } else if (type === "percent") {
+        barQuestion.textContent = "What percent of the bar is shaded?";
+      } else {
+        // Quantity: pick a whole that's a multiple of `segments`
+        const mult = 2 + Math.floor(Math.random() * 9); // 2..10
+        barState.whole = segments * mult;
+        barQuestion.textContent =
+          "If the whole bar is " + barState.whole + ", how much is shaded?";
+      }
+
+      drawBar();
+      barAnswer.value = "";
+      barFeedback.textContent = "";
+      barFeedback.className = "feedback";
+      barAnswer.focus();
+    }
+
+    function drawBar() {
+      const W = 640, H = 90, padX = 10;
+      const innerW = W - 2 * padX;
+      const segW = innerW / barState.segments;
+      let svg = "";
+      for (let i = 0; i < barState.segments; i++) {
+        const x = padX + i * segW;
+        const filled = i < barState.shaded;
+        svg += `<rect x="${x}" y="20" width="${segW}" height="50" ` +
+               `fill="${filled ? "#1a1a40" : "#fff"}" ` +
+               `stroke="#1a1a40" stroke-width="2"/>`;
+      }
+      // Outer outline
+      svg += `<rect x="${padX}" y="20" width="${innerW}" height="50" ` +
+             `fill="none" stroke="#1a1a40" stroke-width="3"/>`;
+      barSvg.innerHTML = svg;
+    }
+
+    function checkBarAnswer() {
+      const raw = barAnswer.value.trim();
+      if (!raw) return;
+      barState.attempts++;
+
+      const { segments, shaded, type, whole } = barState;
+      let correct = false;
+
+      if (type === "fraction") {
+        // Accept "a/b" (any equivalent) or decimal.
+        const m = raw.match(/^(-?\d+)\s*\/\s*(\d+)$/);
+        if (m) {
+          const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+          if (b > 0) correct = Math.abs(a / b - shaded / segments) < 1e-9;
+        } else {
+          const n = parseFloat(raw);
+          if (!isNaN(n)) correct = Math.abs(n - shaded / segments) < 1e-6;
+        }
+      } else if (type === "percent") {
+        const cleaned = raw.replace(/%/g, "").trim();
+        const n = parseFloat(cleaned);
+        if (!isNaN(n)) correct = Math.abs(n - (shaded / segments) * 100) < 1e-6;
+      } else {
+        const n = parseFloat(raw);
+        if (!isNaN(n)) correct = Math.abs(n - (shaded * whole / segments)) < 1e-9;
+      }
+
+      if (correct) {
+        barState.correct++;
+        barFeedback.textContent = "Correct!";
+        barFeedback.className = "feedback ok";
+      } else {
+        let answerStr;
+        if (type === "fraction") {
+          const g = gcd(shaded, segments);
+          answerStr = `${shaded / g}/${segments / g}` +
+                      (g === 1 ? "" : ` (or ${shaded}/${segments})`);
+        } else if (type === "percent") {
+          answerStr = (shaded * 100 / segments).toFixed(2).replace(/\.?0+$/, "") + "%";
+        } else {
+          answerStr = String(shaded * whole / segments);
+        }
+        barFeedback.textContent = `Not quite. The answer is ${answerStr}.`;
+        barFeedback.className = "feedback err";
+      }
+      barScore.textContent =
+        `Correct: ${barState.correct} / Attempted: ${barState.attempts}`;
+    }
+
+    barCheck.addEventListener("click", checkBarAnswer);
+    barNext.addEventListener("click", newProblem);
+    barAnswer.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        if (barFeedback.classList.contains("ok") ||
+            barFeedback.classList.contains("err")) {
+          newProblem();
+        } else {
+          checkBarAnswer();
+        }
+      }
+    });
+    document.querySelectorAll('input[name="qtype"]').forEach((r) =>
+      r.addEventListener("change", newProblem));
+    newProblem();
+
+    // --- AI chat (Level III+) -------------------------------------------
+    const aiHistory = [];
+
+    function renderChat() {
+      chatLog.innerHTML = "";
+      if (aiHistory.length === 0) {
+        const e = document.createElement("div");
+        e.className = "chat-empty";
+        e.textContent = "No messages yet. Say hello!";
+        chatLog.appendChild(e);
+        return;
+      }
+      aiHistory.forEach((m) => {
+        const div = document.createElement("div");
+        div.className = "chat-msg " + m.role;
+        div.textContent = m.content;
+        chatLog.appendChild(div);
+      });
+      chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+    async function sendAI() {
+      const text = aiInput.value.trim();
+      if (!text) return;
+      if (!session.password ||
+          !(session.level === "III" || session.level === "SIV")) {
+        aiStatus.textContent = "Level III clearance or higher required.";
+        return;
+      }
+      aiHistory.push({ role: "user", content: text });
+      renderChat();
+      aiInput.value = "";
+      aiSend.disabled = true;
+      aiStatus.textContent = "Thinking…";
+      try {
+        const res = await fetch("/api/ai", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            password: session.password,
+            messages: aiHistory,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          aiHistory.pop();
+          aiStatus.textContent = data.error || `Request failed (${res.status}).`;
+        } else {
+          aiHistory.push({ role: "assistant", content: data.reply || "(empty)" });
+          aiStatus.textContent = data.model ? "Model: " + data.model : "";
+        }
+        renderChat();
+      } catch (err) {
+        aiHistory.pop();
+        renderChat();
+        aiStatus.textContent =
+          "Could not reach the server. Is python3 server.py running?";
+      } finally {
+        aiSend.disabled = false;
+      }
+    }
+
+    aiSend.addEventListener("click", sendAI);
+    aiInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendAI();
+      }
+    });
+    aiClear.addEventListener("click", () => {
+      aiHistory.length = 0;
+      aiStatus.textContent = "";
+      renderChat();
+    });
+  </script>
+</body>
+</html>
