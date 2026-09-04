@@ -58,6 +58,18 @@
     .space .btn.secondary { background: transparent; color: #fff; border-color: #475569; }
     .space .btn.secondary:hover { background: rgba(255,255,255,0.08); }
 
+    /* ---- confirm dialog (in-app, not window.confirm) ---- */
+    .confirm-overlay {
+      position: fixed; inset: 0; background: rgba(15, 23, 42, 0.5);
+      display: flex; align-items: center; justify-content: center; padding: 1.5rem; z-index: 1000;
+    }
+    .confirm-box {
+      background: #fff; border-radius: 0.75rem; padding: 1.5rem; max-width: 24rem; width: 100%;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+    }
+    .confirm-box p { margin: 0 0 1.25rem; }
+    .confirm-actions { display: flex; justify-content: flex-end; gap: 0.75rem; }
+
     /* ---- Finn dialogue ---- */
     .finn {
       display: flex; gap: 1rem; align-items: flex-start; width: 100%;

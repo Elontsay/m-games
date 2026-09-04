@@ -53,6 +53,19 @@
       saveState();
       saveAch();
       if (!saved || !saved.state) pushProgress();
+      await claimWalletCredits();
+    } catch {}
+  }
+  // MBucks earned server-side (an approved contest completion) aren't in the
+  // local save until claimed -- the server never edits that opaque blob itself.
+  async function claimWalletCredits() {
+    try {
+      const { credits } = await apiJson("/api/wallet/credits");
+      if (credits && credits.length) {
+        mmcState().bucks = mmcBucks() + credits.reduce((t, c) => t + c.amount, 0);
+        saveState();
+        pushProgress();
+      }
     } catch {}
   }
 
@@ -215,8 +228,8 @@
       </div>
     </main>`);
     on("[data-back]", "click", () => back());
-    on("[data-reset-ach]", "click", () => {
-      if (confirm("Reset all achievements and stats?")) { ach = defaultAch(); saveAch(); achievementsScreen(back); }
+    on("[data-reset-ach]", "click", async () => {
+      if (await askConfirm("Reset all achievements and stats?")) { ach = defaultAch(); saveAch(); achievementsScreen(back); }
     });
   }
 
@@ -258,8 +271,8 @@
     saveState();
     welcome();
   }
-  function confirmReset() {
-    if (confirm("Reset all progress? Achievements are kept.")) resetProgress();
+  async function confirmReset() {
+    if (await askConfirm("Reset all progress? Achievements are kept.")) resetProgress();
   }
 
   // ---- helpers -------------------------------------------------------------
@@ -296,6 +309,28 @@
   }
   function on(selector, event, handler) {
     app.querySelectorAll(selector).forEach((el) => el.addEventListener(event, handler));
+  }
+  // In-app replacement for window.confirm(): some browsers/embedded webviews silently
+  // suppress native confirm() dialogs (it just returns false), which made every button
+  // gated behind one look broken. This renders its own overlay instead.
+  function askConfirm(message) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "confirm-overlay";
+      overlay.innerHTML = `<div class="confirm-box" role="alertdialog" aria-modal="true">
+        <p>${esc(message)}</p>
+        <div class="confirm-actions">
+          <button class="btn secondary" data-no>Cancel</button>
+          <button class="btn" data-yes>OK</button>
+        </div>
+      </div>`;
+      document.body.appendChild(overlay);
+      const done = (v) => { overlay.remove(); resolve(v); };
+      overlay.querySelector("[data-yes]").addEventListener("click", () => done(true));
+      overlay.querySelector("[data-no]").addEventListener("click", () => done(false));
+      overlay.addEventListener("click", (e) => { if (e.target === overlay) done(false); });
+      overlay.querySelector("[data-yes]").focus();
+    });
   }
   function bar(sub) {
     return `<header class="bar">
@@ -514,7 +549,7 @@
     show(`<main class="screen space">
       <div class="topbar">
         <div class="brand">M Games</div>
-        <div class="topbar-right">${adminButton()}${travelButton()}<button class="btn sm secondary" data-mmc title="M Math Competition">📋 MMC</button><button class="btn sm secondary" data-games title="Other games">🎮 Games</button>${achButton()}${profileCard()}</div>
+        <div class="topbar-right">${adminButton()}${councilButton()}${travelButton()}<button class="btn sm secondary" data-mmc title="M Math Competition">📋 MMC</button><button class="btn sm secondary" data-games title="Other games">🎮 Games</button>${achButton()}${profileCard()}</div>
       </div>
       <div class="planet-area">
         <div class="planet" ${themeStyle(t)}>
@@ -541,6 +576,7 @@
     on("[data-reset]", "click", confirmReset);
     on("[data-achievements]", "click", () => achievementsScreen(planet));
     on("[data-admin]", "click", () => adminPanel(planet));
+    on("[data-council]", "click", () => councilScreen(planet));
     on("[data-games]", "click", () => games(planet));
     on("[data-travel]", "click", () => travel(planet));
     on("[data-profile]", "click", () => profileScreen(planet));
@@ -661,6 +697,10 @@
   function adminButton() {
     return isAdmin() ? `<button class="btn sm secondary" data-admin title="Admin hacks">⚙ Admin</button>` : "";
   }
+  function councilButton() {
+    const t = API.me ? API.me.adminTier || 0 : 0;
+    return t >= 1 ? `<button class="btn sm secondary" data-council title="Arena governance">🏛 Tier ${t}</button>` : "";
+  }
   function adminAutoBeatFinn() {
     if (!isAdmin()) return;
     state.tierIndex = CHAIN.indexOf("Diamond");
@@ -731,6 +771,10 @@
             <div><strong>Jump to the Diamond Final</strong><div class="small muted">Puts you in Diamond with a bracket at the Final vs ${esc(GUIDE.name)}.</div></div>
             <button class="btn sm" data-act="final">Go to Final</button>
           </div>
+          <div class="admin-row">
+            <div><strong>Enter the Arena of Champions</strong><div class="small muted">Skip beating ${esc(GUIDE.name)} and go straight to the Arena as a Tier 1 Ruler. Needs sign-in.</div></div>
+            <button class="btn sm" data-act="arena">Enter Arena</button>
+          </div>
         </div>
       </div>
       <div class="footer between">
@@ -740,7 +784,7 @@
     </main>`);
 
     const again = (msg) => adminPanel(back, msg);
-    on("[data-act]", "click", (e) => {
+    on("[data-act]", "click", async (e) => {
       const act = e.currentTarget.dataset.act;
       if (act === "infinite") {
         state.admin = { ...(state.admin || {}), infiniteXp: !infiniteXp() };
@@ -777,6 +821,13 @@
         state.diamond = { active: true, round: DIAMOND.rounds.length - 1, opponent: GUIDE.name };
         saveState();
         return diamond();
+      }
+      if (act === "arena") {
+        if (!API.me) return again("Sign in first — the Arena tracks real accounts.");
+        state.champion = true;
+        saveState();
+        await arenaEnter();
+        return arenaScreen();
       }
     });
     app.querySelector("[data-add-xp]").addEventListener("submit", (e) => {
@@ -1259,8 +1310,17 @@
       if (left <= 0) finish(true);
     }
 
-    function finish(auto) {
-      if (!auto && !confirm(`Submit your ${exam.name}? ${picked.filter((p) => p === null).length} question(s) are blank.`)) return;
+    let finishing = false;
+    async function finish(auto) {
+      if (finishing) return;
+      if (!auto) {
+        finishing = true;
+        const ok = await askConfirm(`Submit your ${exam.name}? ${picked.filter((p) => p === null).length} question(s) are blank.`);
+        finishing = false;
+        if (!ok) return;
+      }
+      if (finishing) return;
+      finishing = true;
       if (activeTimer) { clearInterval(activeTimer); activeTimer = null; }
       let correct = 0, wrong = 0, blank = 0;
       paper.forEach((q, i) => {
@@ -1289,8 +1349,9 @@
     on("[data-next-q]", "click", () => { if (index < paper.length - 1) { index++; paintQuestion(); paintGrid(); } });
     on("[data-clear]", "click", () => { picked[index] = null; paintQuestion(); paintGrid(); });
     on("[data-submit]", "click", () => finish(false));
-    on("[data-quit]", "click", () => {
-      if (!confirm(formal ? "Quit? This month's formal sitting is already used up, and your paper will be scored as it stands." : "Quit this practice exam?")) return;
+    on("[data-quit]", "click", async () => {
+      const ok = await askConfirm(formal ? "Quit? This month's formal sitting is already used up, and your paper will be scored as it stands." : "Quit this practice exam?");
+      if (!ok) return;
       if (formal) finish(true);
       else { if (activeTimer) { clearInterval(activeTimer); activeTimer = null; } mmcHall(back); }
     });
@@ -1464,15 +1525,49 @@
   function playerScreen(id, back) {
     show(`<main class="screen">${bar("Player")}<div class="content"><p class="muted">Loading…</p></div></main>`);
     apiJson(`/api/players/${id}`).then((p) => {
+      const canReport = API.me && (API.me.adminTier || 0) >= 2 && !p.you;
       show(`<main class="screen">${bar(p.name)}
         <div class="content">
           ${profileHero(p)}
           ${statGrid(p)}
         </div>
-        <div class="footer between"><button class="btn secondary" data-back>Back to players</button></div>
+        <div class="footer between">
+          <button class="btn secondary" data-back>Back to players</button>
+          ${canReport ? `<button class="btn link" data-report>🚩 Report player</button>` : ""}
+        </div>
       </main>`);
       on("[data-back]", "click", () => profileScreen(back));
+      if (canReport) on("[data-report]", "click", () => reportScreen(p.id, p.name, back));
     }).catch(() => profileScreen(back));
+  }
+
+  function reportScreen(id, name, back) {
+    show(`<main class="screen">${bar(`Report ${name}`)}
+      <div class="content">
+        ${finn("Tell a Tier 3 moderator what happened. False reports can get your own account actioned.")}
+        <h2>Report ${esc(name)}</h2>
+        <form data-form>
+          <textarea data-reason rows="4" style="width:100%;padding:0.75rem;border:1px solid #cbd5e1;border-radius:0.5rem;font:inherit" placeholder="What happened?" required></textarea>
+        </form>
+      </div>
+      <div class="footer between">
+        <button class="btn secondary" data-back>Cancel</button>
+        <button class="btn" data-submit>Submit report</button>
+      </div>
+    </main>`);
+    on("[data-back]", "click", () => playerScreen(id, back));
+    on("[data-submit]", "click", async () => {
+      const reason = app.querySelector("[data-reason]").value.trim();
+      if (!reason) return;
+      try {
+        await apiJson("/api/admin/report", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reportedUserId: id, reason }),
+        });
+      } catch {}
+      playerScreen(id, back);
+    });
   }
 
   // ---- Free roam: travel between tiers (champions only) ---------------------------
@@ -1653,8 +1748,8 @@
       on("[data-launch]", "click", launch);
       const shop = app.querySelector("[data-buy-supplies]");
       if (shop) shop.addEventListener("submit", (e) => { e.preventDefault(); buySupplies(Number(shop.querySelector("input").value)); });
-      on("[data-quit]", "click", () => {
-        if (phase === "build" && !confirm("Abandon this round? The XP is spent either way.")) return;
+      on("[data-quit]", "click", async () => {
+        if (phase === "build" && !(await askConfirm("Abandon this round? The XP is spent either way."))) return;
         games(back);
       });
     }
@@ -1775,8 +1870,8 @@
       });
       box.querySelector("[data-giveup]").addEventListener("click", () => giveUp(i));
     });
-    giveUpAllBtn.addEventListener("click", () => {
-      if (confirm("Give up on all remaining questions?")) qs.forEach((_, i) => giveUp(i));
+    giveUpAllBtn.addEventListener("click", async () => {
+      if (await askConfirm("Give up on all remaining questions?")) qs.forEach((_, i) => giveUp(i));
     });
     finishBtn.addEventListener("click", finish);
 
@@ -1920,12 +2015,13 @@
     if (d.active) actions = `<button class="btn" data-play>Play the ${esc(roundName(d.round))}</button>`;
     else actions = `<button class="btn" data-enter>${state.titles ? "Enter another tournament" : "Enter the tournament"}</button>`;
     if (state.champion) actions += `<button class="btn secondary" data-rematch>Rematch ${esc(GUIDE.name)}</button>`;
+    if (state.champion) actions += `<button class="btn secondary" data-arena>🏟 Arena of Champions</button>`;
     if (isAdmin()) actions += `<button class="btn secondary" data-autobeat title="Admin: win the Final in 1.0s">⚙ Auto-beat Finn</button>`;
 
     show(`<main class="screen space">
       <div class="topbar">
         <div class="brand">M Games</div>
-        <div class="topbar-right">${adminButton()}${travelButton()}<button class="btn sm secondary" data-mmc title="M Math Competition">📋 MMC</button><button class="btn sm secondary" data-games title="Other games">🎮 Games</button>${achButton()}${profileCard()}</div>
+        <div class="topbar-right">${adminButton()}${councilButton()}${travelButton()}<button class="btn sm secondary" data-mmc title="M Math Competition">📋 MMC</button><button class="btn sm secondary" data-games title="Other games">🎮 Games</button>${achButton()}${profileCard()}</div>
       </div>
       <div class="planet-area">
         <div class="planet arena" ${themeStyle(t)}>
@@ -1950,11 +2046,13 @@
     });
     on("[data-play]", "click", () => match({ round: d.round, opponent: d.opponent, rematch: false }));
     on("[data-rematch]", "click", () => match({ round: DIAMOND.rounds.length - 1, opponent: GUIDE.name, rematch: true }));
+    on("[data-arena]", "click", () => arenaScreen());
     on("[data-autobeat]", "click", adminAutoBeatFinn);
     on("[data-home]", "click", welcome);
     on("[data-reset]", "click", confirmReset);
     on("[data-achievements]", "click", () => achievementsScreen(diamond));
     on("[data-admin]", "click", () => adminPanel(diamond));
+    on("[data-council]", "click", () => councilScreen(diamond));
     on("[data-games]", "click", () => games(diamond));
     on("[data-travel]", "click", () => travel(diamond));
     on("[data-profile]", "click", () => profileScreen(diamond));
@@ -2045,8 +2143,8 @@
       feedback.textContent = `Skipped. +${DIAMOND.skipPenaltySeconds}s.`;
       advance();
     });
-    on("[data-forfeit]", "click", () => {
-      if (!confirm("Forfeit this match?")) return;
+    on("[data-forfeit]", "click", async () => {
+      if (!(await askConfirm("Forfeit this match?"))) return;
       if (activeTimer) { clearInterval(activeTimer); activeTimer = null; }
       matchResult(opts, { playerTime: Infinity, aiTime, wrongs, qs, firstCorrectAt, forfeit: true });
     });
@@ -2073,11 +2171,12 @@
       headline = won ? "You beat me again. The crown stays exactly where it is." : "Got you this time! The crown is still yours, though. Come back whenever you want another go.";
       next = () => diamond();
     } else if (won && final) {
+      const firstTime = !state.champion;
       state.champion = true;
       state.titles += 1;
       state.diamond = { active: false, round: 0, opponent: null };
       headline = `You beat me in the final. ${displayName()}, you are the Ruler of the M Games!`;
-      next = () => diamond();
+      next = firstTime ? () => arenaCutscene() : () => diamond();
     } else if (won) {
       state.diamond.round += 1;
       state.diamond.opponent = pickOpponent(state.diamond.round);
@@ -2106,9 +2205,352 @@
     on("[data-next]", "click", next);
   }
 
+  // ---- Arena of Champions ---------------------------------------------------
+  // Beating Finn only makes you a Tier 1 Ruler, the lowest rank. The real ladder
+  // is a monthly time trial (three tries, fastest one counts, skipping costs a
+  // time penalty) tracked server-side across every ruler's account. Until real
+  // opponents exist, the field is one placeholder NPC with a fixed unbeatable
+  // time -- see NPC_TIME_SECONDS in app/arena.py for the server-side half of this.
+  async function arenaEnter() {
+    if (!API.me) return;
+    try { await apiJson("/api/arena/enter", { method: "POST" }); } catch {}
+  }
+
+  function arenaCutscene() {
+    arenaEnter();
+    show(`<main class="screen">
+      <div class="video-area"><div class="video-slot"></div></div>
+      <div class="content center">
+        <h2 style="text-align:center">The gates of the Arena of Champions open.</h2>
+        <p class="muted" style="text-align:center;max-width:32rem">
+          Beating ${esc(GUIDE.name)} only makes you a <strong>Tier 1 Ruler</strong> — the lowest rank.
+          Somewhere out there, other rulers are already racing the clock for the next promotion.
+        </p>
+      </div>
+      <div class="footer"><button class="btn" data-next>Enter the Arena of Champions</button></div>
+    </main>`);
+    on("[data-next]", "click", () => arenaScreen());
+  }
+
+  async function arenaScreen() {
+    if (!API.me) {
+      show(`<main class="screen">${bar("Arena of Champions")}
+        <div class="content">
+          ${finn("The Arena of Champions ranks real rulers against each other, so it only runs for signed-in accounts. Sign in to enter it — your local progress stays right where it is.")}
+          <h2>Sign in to enter</h2>
+        </div>
+        <div class="footer between">
+          <button class="btn secondary" data-back>Back to the Arena</button>
+          <a class="btn" href="/login">${API.google ? "Sign in with Google" : "Sign in"}</a>
+        </div>
+      </main>`);
+      on("[data-back]", "click", () => diamond());
+      return;
+    }
+    let status = null;
+    try { status = await apiJson("/api/arena/status"); } catch {}
+    if (!status) {
+      show(`<main class="screen">${bar("Arena of Champions")}
+        <div class="content">${finn("Couldn't reach the Arena right now. Try again in a moment.")}</div>
+        <div class="footer"><button class="btn secondary" data-back>Back to the Arena</button></div>
+      </main>`);
+      on("[data-back]", "click", () => diamond());
+      return;
+    }
+    if (!status.entered) {
+      show(`<main class="screen">${bar("Arena of Champions")}
+        <div class="content">${finn(`Beat ${esc(GUIDE.name)} in the Diamond Final first — that's what opens the gates here.`)}</div>
+        <div class="footer"><button class="btn secondary" data-back>Back to the Arena</button></div>
+      </main>`);
+      on("[data-back]", "click", () => diamond());
+      return;
+    }
+    const canPlay = status.attemptsLeft > 0;
+    const gotPB = status.personalBestSeconds !== null;
+    const board = status.leaderboard || [];
+    const leader = board[0];
+    const youLead = !!(leader && leader.you);
+    show(`<main class="screen">${bar("Arena of Champions")}
+      <div class="content">
+        <h2>👑 Tier ${status.rulerTier} Ruler</h2>
+        <p class="muted">Monthly ladder · ${esc(status.period)} · you're racing every ruler who attempts this month — fastest single time wins.</p>
+        <div class="times">
+          <div class="time ${youLead ? "win" : ""}">
+            <div class="small muted">Your best this month</div>
+            <div class="score">${gotPB ? `${status.personalBestSeconds.toFixed(1)}s` : "—"}</div>
+          </div>
+          <div class="time">
+            <div class="small muted">${leader ? (leader.you ? "You're leading" : `Leading: ${esc(leader.name)}`) : "No times set yet"}</div>
+            <div class="score">${leader ? `${leader.timeSeconds.toFixed(1)}s` : "—"}</div>
+          </div>
+        </div>
+        <p class="small muted">${status.attemptsLeft} of ${status.maxAttempts} attempts left this month · skipping a question costs +${status.skipPenaltySeconds}s.</p>
+        ${board.length ? `
+          <h3 style="margin-top:1.5rem">This month's field</h3>
+          ${board.map((r, i) => `<div class="admin-row"><div>#${i + 1} ${esc(r.name)}${r.you ? " (you)" : ""}</div><div>${r.timeSeconds.toFixed(1)}s</div></div>`).join("")}
+        ` : `<p class="small muted">Nobody has set a time yet this month — be the first.</p>`}
+        ${status.lastResult ? `<p class="small muted" style="margin-top:1rem">Last month (${esc(status.lastResult.period)}): ${status.lastResult.noEntrants ? "nobody attempted, so no promotion." : `${esc(status.lastResult.winnerName)} took it at ${status.lastResult.timeSeconds.toFixed(1)}s and was promoted.`}</p>` : ""}
+      </div>
+      <div class="footer between">
+        <button class="btn secondary" data-back>Back to the Arena</button>
+        <button class="btn" data-attempt ${canPlay ? "" : "disabled"}>${canPlay ? "Attempt the ladder" : "No attempts left this month"}</button>
+      </div>
+    </main>`);
+    on("[data-back]", "click", () => diamond());
+    on("[data-attempt]", "click", () => arenaAttempt(status));
+  }
+
+  function arenaAttempt(status) {
+    const qs = Array.from({ length: DIAMOND.questionsPerMatch }, () => {
+      const p = DIAMOND.pool[rnd(0, DIAMOND.pool.length - 1)];
+      return { ...p.make(), tag: `${p.tier} · ${p.topic}` };
+    });
+    let index = 0, penalty = 0, wrongs = 0;
+    const started = performance.now();
+    const elapsed = () => (performance.now() - started) / 1000 + penalty;
+
+    show(`<main class="screen">${bar("Arena of Champions")}
+      <div class="content">
+        <div class="match-head">
+          <div><div class="small muted">Attempt ${status.attemptsUsed + 1} of ${status.maxAttempts}</div><strong>${status.leaderboard && status.leaderboard[0] ? `Beat ${esc(status.leaderboard[0].name)}'s ${status.leaderboard[0].timeSeconds.toFixed(1)}s` : "Set the first time this month"}</strong></div>
+          <div class="clock" id="clock">0.0s</div>
+        </div>
+        <div class="small muted" id="progress">Question 1 of ${qs.length}</div>
+        <div class="question match-q">
+          <div class="qtag" id="qtag"></div>
+          <p class="qtext" id="qtext"></p>
+          <form class="answer" data-form>
+            <input type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Your answer" aria-label="Answer" autofocus>
+            <button type="submit" class="btn sm">Submit</button>
+            <button type="button" class="btn sm secondary" data-skip>Skip (+${status.skipPenaltySeconds}s)</button>
+          </form>
+          <div class="tries" id="feedback">Fastest time wins the month.</div>
+        </div>
+      </div>
+      <div class="footer between">
+        <button class="btn link" data-forfeit>Forfeit attempt</button>
+      </div>
+    </main>`);
+
+    const input = app.querySelector("[data-form] input");
+    const clock = app.querySelector("#clock");
+    const feedback = app.querySelector("#feedback");
+    activeTimer = setInterval(() => { clock.textContent = `${elapsed().toFixed(1)}s`; }, 100);
+
+    function render() {
+      const q = qs[index];
+      app.querySelector("#progress").textContent = `Question ${index + 1} of ${qs.length}`;
+      app.querySelector("#qtag").textContent = q.tag;
+      app.querySelector("#qtext").textContent = q.q;
+      input.value = "";
+      input.focus();
+    }
+    function advance() {
+      index += 1;
+      if (index >= qs.length) return finishAttempt();
+      render();
+    }
+    async function finishAttempt() {
+      if (activeTimer) { clearInterval(activeTimer); activeTimer = null; }
+      const timeSeconds = elapsed();
+      let result = null;
+      try {
+        result = await apiJson("/api/arena/attempt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ timeSeconds }),
+        });
+      } catch {}
+      arenaResult(timeSeconds, wrongs, result);
+    }
+
+    app.querySelector("[data-form]").addEventListener("submit", (e) => {
+      e.preventDefault();
+      if (!normalize(input.value)) return input.focus();
+      if (isCorrect(qs[index], input.value)) {
+        streakHit();
+        problemDone();
+        feedback.textContent = "Correct!";
+        advance();
+      } else {
+        wrongs += 1;
+        streakBreak();
+        feedback.textContent = "Not quite. Keep going, the clock is running.";
+        input.select();
+      }
+    });
+    on("[data-skip]", "click", () => {
+      penalty += status.skipPenaltySeconds;
+      streakBreak();
+      problemDone();
+      feedback.textContent = `Skipped. +${status.skipPenaltySeconds}s.`;
+      advance();
+    });
+    on("[data-forfeit]", "click", async () => {
+      if (!(await askConfirm("Forfeit this attempt? It won't count toward your 3 tries this month."))) return;
+      if (activeTimer) { clearInterval(activeTimer); activeTimer = null; }
+      arenaScreen();
+    });
+    render();
+  }
+
+  function arenaResult(timeSeconds, wrongs, result) {
+    const leader = result && result.leaderboard && result.leaderboard[0];
+    const leading = !!(leader && leader.you);
+    show(`<main class="screen">${bar("Arena of Champions")}
+      <div class="content">
+        ${finn(leading
+          ? "You're in the lead! If that holds up when the month closes, you'll be promoted a Ruler tier."
+          : "Recorded. You get more tries this month, and a fresh field next month.")}
+        <h2>Attempt result</h2>
+        <div class="times">
+          <div class="time ${leading ? "win" : ""}"><div class="small muted">You</div><div class="score">${timeSeconds.toFixed(1)}s</div><div class="small muted">${wrongs} wrong attempt${wrongs === 1 ? "" : "s"}</div></div>
+          ${leader && !leading ? `<div class="time win"><div class="small muted">Leading: ${esc(leader.name)}</div><div class="score">${leader.timeSeconds.toFixed(1)}s</div></div>` : ""}
+        </div>
+        ${result
+          ? `<p class="small muted">${result.attemptsLeft} of ${result.maxAttempts} tries left this month · personal best ${result.personalBestSeconds.toFixed(1)}s</p>`
+          : `<p class="small muted">Couldn't reach the server to record this attempt — it may not have been saved.</p>`}
+      </div>
+      <div class="footer"><button class="btn" data-back>Back to the Arena</button></div>
+    </main>`);
+    on("[data-back]", "click", () => arenaScreen());
+  }
+
+  // ---- Arena governance (Tier 1-4) -------------------------------------------
+  async function councilScreen(back) {
+    const tier = API.me ? API.me.adminTier || 0 : 0;
+    if (tier < 1) return back();
+
+    show(`<main class="screen">${bar("Arena Governance")}<div class="content"><p class="muted">Loading…</p></div></main>`);
+    const [mineData, reportsData] = await Promise.allSettled([
+      apiJson("/api/admin/contests"),
+      tier >= 3 ? apiJson("/api/admin/reports") : Promise.resolve({ reports: [] }),
+    ]);
+    const contests = mineData.status === "fulfilled" ? mineData.value.contests : [];
+    const reports = reportsData.status === "fulfilled" ? reportsData.value.reports.filter((r) => r.status === "open") : [];
+
+    const inputStyle = "padding:0.6rem;border:1px solid #cbd5e1;border-radius:0.5rem;font:inherit";
+    const contestRow = (c) => `<div class="admin-row">
+      <div>
+        <strong>${esc(c.title)}</strong> <span class="small muted">· ${esc(c.status)}${c.mbucksReward ? ` · ${fmtXp(c.mbucksReward)} MBucks` : ""}</span>
+        <div class="small muted">${esc(c.description)}</div>
+      </div>
+      ${tier >= 3 && c.status === "pending" ? `<span style="display:flex;gap:0.5rem">
+        <button class="btn sm" data-approve="${c.id}">Approve</button>
+        <button class="btn sm secondary" data-reject="${c.id}">Reject</button>
+      </span>` : ""}
+    </div>`;
+    const reportRow = (r) => `<div class="admin-row">
+      <div>
+        <strong>${esc(r.reportedName)}</strong>
+        <div class="small muted">reported by ${esc(r.reporterName)} · ${esc(r.reason)}</div>
+      </div>
+      <span style="display:flex;gap:0.5rem">
+        <button class="btn sm" data-ban="${r.reportedUserId}">Ban</button>
+        <button class="btn sm secondary" data-dismiss="${r.id}">Dismiss</button>
+      </span>
+    </div>`;
+
+    show(`<main class="screen">${bar("Arena Governance")}
+      <div class="content">
+        <h2>🏛 Tier ${tier} Governance</h2>
+        <p class="small muted">Tier 1+ can propose contests. Tier 3 approves them and bans reported players. Tier 4 (the owner) hands out Tier 3.</p>
+
+        <h3 style="margin-top:1.5rem">Propose a contest</h3>
+        <form data-contest-form class="admin-row" style="flex-direction:column;align-items:stretch;gap:0.5rem">
+          <input data-title placeholder="Title" maxlength="80" style="${inputStyle}">
+          <textarea data-desc rows="2" placeholder="Description" maxlength="1000" style="${inputStyle}"></textarea>
+          <input data-reward type="number" min="0" placeholder="MBucks reward on completion" style="${inputStyle}">
+          <button type="submit" class="btn sm">Submit for approval</button>
+        </form>
+
+        <h3 style="margin-top:1.5rem">${tier >= 3 ? "All contests" : "Your contests"}</h3>
+        ${contests.length ? contests.map(contestRow).join("") : `<p class="small muted">None yet.</p>`}
+
+        ${tier >= 3 ? `
+          <h3 style="margin-top:1.5rem">Open reports</h3>
+          ${reports.length ? reports.map(reportRow).join("") : `<p class="small muted">No open reports.</p>`}
+        ` : ""}
+
+        ${tier >= 4 ? `
+          <h3 style="margin-top:1.5rem">Promote to Tier 3</h3>
+          <form data-promote-form class="admin-row" style="gap:0.5rem">
+            <input data-promote-id type="number" min="1" placeholder="Player ID" style="${inputStyle};width:8rem">
+            <button type="submit" class="btn sm">Promote</button>
+          </form>
+          <p class="small muted">Find a player's ID by opening their profile from the player directory.</p>
+        ` : ""}
+      </div>
+      <div class="footer"><button class="btn secondary" data-back>Back</button></div>
+    </main>`);
+
+    const refresh = () => councilScreen(back);
+    on("[data-back]", "click", () => back());
+    app.querySelector("[data-contest-form]").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const title = app.querySelector("[data-title]").value.trim();
+      const description = app.querySelector("[data-desc]").value.trim();
+      const mbucksReward = Number(app.querySelector("[data-reward]").value) || 0;
+      if (!title || !description) return;
+      try {
+        await apiJson("/api/admin/contests", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, description, mbucksReward }),
+        });
+      } catch {}
+      refresh();
+    });
+    on("[data-approve]", "click", async (e) => {
+      try { await apiJson(`/api/admin/contests/${e.currentTarget.dataset.approve}/approve`, { method: "POST" }); } catch {}
+      refresh();
+    });
+    on("[data-reject]", "click", async (e) => {
+      try { await apiJson(`/api/admin/contests/${e.currentTarget.dataset.reject}/reject`, { method: "POST" }); } catch {}
+      refresh();
+    });
+    on("[data-ban]", "click", async (e) => {
+      if (!(await askConfirm("Ban this player? They keep their save but can no longer play or save progress."))) return;
+      try { await apiJson(`/api/admin/users/${e.currentTarget.dataset.ban}/ban`, { method: "POST" }); } catch {}
+      refresh();
+    });
+    on("[data-dismiss]", "click", async (e) => {
+      try { await apiJson(`/api/admin/reports/${e.currentTarget.dataset.dismiss}/dismiss`, { method: "POST" }); } catch {}
+      refresh();
+    });
+    const promoteForm = app.querySelector("[data-promote-form]");
+    if (promoteForm) promoteForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const id = Number(app.querySelector("[data-promote-id]").value);
+      if (!id) return;
+      try {
+        await apiJson(`/api/admin/users/${id}/promote`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tier: 3 }),
+        });
+      } catch {}
+      refresh();
+    });
+  }
+
+  function bannedScreen() {
+    show(`<main class="screen">
+      <div class="content center">
+        <h2>Account banned</h2>
+        <p class="muted" style="max-width:28rem;text-align:center">
+          A Tier 3 moderator has banned this account for a reported violation.
+          Your saved progress is preserved but can no longer be changed.
+        </p>
+      </div>
+      <div class="footer"><a class="btn secondary" href="/logout">Sign out</a></div>
+    </main>`);
+  }
+
   // ---- boot ---------------------------------------------------------------------
   show(`<main class="screen"><div class="content center"><p class="muted">Loading…</p></div></main>`);
   bootSync().then(() => {
+    if (API.me && API.me.banned) return bannedScreen();
     if (API.me) unlock("start"); // "Log in"
     welcome();
   });

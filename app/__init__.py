@@ -26,10 +26,13 @@ try:  # optional: load ROOT/.env into the environment
 except ImportError:  # python-dotenv not installed; rely on real env vars
     pass
 
+from .admin import admin_bp  # noqa: E402
 from .api import api_bp  # noqa: E402
+from .arena import arena_bp  # noqa: E402
 from .auth import auth_bp, oauth  # noqa: E402
 from .db import init_db  # noqa: E402
 from .players import players_bp  # noqa: E402
+from .wallet import wallet_bp  # noqa: E402
 
 GOOGLE_METADATA_URL = "https://accounts.google.com/.well-known/openid-configuration"
 
@@ -63,6 +66,9 @@ def create_app() -> Flask:
     app.register_blueprint(auth_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(players_bp)
+    app.register_blueprint(arena_bp)
+    app.register_blueprint(admin_bp)
+    app.register_blueprint(wallet_bp)
 
     @app.get("/")
     def index():

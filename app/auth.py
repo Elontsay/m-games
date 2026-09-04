@@ -10,6 +10,16 @@ from .db import get_user, upsert_user
 oauth = OAuth()
 auth_bp = Blueprint("auth", __name__)
 
+# Arena of Champions governance tiers (separate from the legacy ADMIN_EMAILS
+# "admin hacks" panel below). Tier 4 is permanently reserved for the owner's
+# real, Google-authenticated account -- it is never stored or grantable.
+OWNER_EMAIL = "elontsay@gmail.com"
+# Same code the client's local "admin hacks" panel checks for. A signed-in
+# account whose display name starts with this is auto-Tier 2 (can report
+# players). It cannot reach Tier 3 (ban power) this way -- only the owner
+# (Tier 4) can promote someone to Tier 3.
+NAME_TIER2_PREFIX = "AY1234567YA"
+
 
 def current_user():
     user_id = session.get("user_id")
@@ -18,6 +28,49 @@ def current_user():
 
 def is_admin(user) -> bool:
     return bool(user) and (user["email"] or "").lower() in current_app.config["ADMIN_EMAILS"]
+
+
+def is_owner(user) -> bool:
+    return bool(user) and (user["email"] or "").lower() == OWNER_EMAIL
+
+
+def admin_tier(user) -> int:
+    """Effective Arena governance tier: 0 (none) .. 4 (owner)."""
+    if not user:
+        return 0
+    if is_owner(user):
+        return 4
+    stored = user["admin_tier"] or 0
+    name_bonus = 2 if str(user["name"] or "").startswith(NAME_TIER2_PREFIX) else 0
+    return max(stored, name_bonus)
+
+
+def is_banned(user) -> bool:
+    return bool(user) and bool(user["banned"])
+
+
+def require_user():
+    """Any signed-in account. Aborts 401 if not signed in."""
+    user = current_user()
+    if user is None:
+        abort(401)
+    return user
+
+
+def require_active_user():
+    """Signed in and not banned. Use for anything that changes shared state."""
+    user = require_user()
+    if is_banned(user):
+        abort(403, "This account has been banned.")
+    return user
+
+
+def require_tier(n: int):
+    """Signed in, not banned, and at least Arena governance tier `n`."""
+    user = require_active_user()
+    if admin_tier(user) < n:
+        abort(403, f"Requires Tier {n}.")
+    return user
 
 
 def _sign_in(user) -> None:
@@ -94,4 +147,7 @@ def me():
         picture=user["picture"],
         provider=user["provider"],
         admin=is_admin(user),
+        rulerTier=user["ruler_tier"] or 0,
+        adminTier=admin_tier(user),
+        banned=is_banned(user),
     )

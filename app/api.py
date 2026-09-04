@@ -1,7 +1,7 @@
 """Saved-progress API. The game keeps its state in the browser and mirrors it here per account."""
 from flask import Blueprint, abort, jsonify, request
 
-from .auth import current_user
+from .auth import current_user, require_active_user
 from .db import load_progress, save_progress
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
@@ -28,7 +28,7 @@ def get_progress():
 
 @api_bp.put("/progress")
 def put_progress():
-    user = _require_user()
+    user = require_active_user()
     if request.content_length and request.content_length > MAX_PROGRESS_BYTES:
         abort(413)
     body = request.get_json(silent=True)

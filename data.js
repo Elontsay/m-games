@@ -213,7 +213,7 @@ const TOPICS = {
     ],
   },
 
-  // Platinum
+  // Platinum (now Crystal's topics)
   sectors: {
     name: "Circle Sectors",
     levels: [
@@ -247,7 +247,7 @@ const TOPICS = {
     ],
   },
 
-  // Crystal
+  // Crystal (now Emerald's topics)
   multiplyPoly: {
     name: "Multiplying Polynomials",
     levels: [
@@ -281,7 +281,7 @@ const TOPICS = {
     ],
   },
 
-  // Emerald
+  // Emerald (now Amethyst's topics)
   addComplex: {
     name: "Adding Complex Numbers",
     levels: [
@@ -315,7 +315,7 @@ const TOPICS = {
     ],
   },
 
-  // Amethyst
+  // Amethyst (now Ruby's topics)
   graphQuad: {
     name: "Graphing Quadratics",
     levels: [
@@ -349,7 +349,7 @@ const TOPICS = {
     ],
   },
 
-  // Ruby
+  // Ruby (now Obsidian's topics)
   trig: {
     name: "Trigonometry",
     levels: [
@@ -390,48 +390,6 @@ const TOPICS = {
       () => { const A = nz(-9, 9), C = rnd(-9, 9); return Math.random() < 0.5 ? Q(`Maximum value of y = ${coef(A)}sin(x) ${C < 0 ? "−" : "+"} ${Math.abs(C)}?`, C + Math.abs(A)) : Q(`Minimum value of y = ${coef(A)}cos(x) ${C < 0 ? "−" : "+"} ${Math.abs(C)}?`, C - Math.abs(A)); },
     ],
   },
-
-  // Obsidian
-  derivatives: {
-    name: "Derivatives",
-    levels: [
-      () => { const a = rnd(1, 9), n = rnd(2, 5); return Q(`d/dx of ${a === 1 ? "" : a}x^${n}?  (e.g. 6x^2)`, poly([a * n, ...Array(n - 1).fill(0)])); },
-      () => { const a = nz(-6, 6), b = nz(-9, 9), c = rnd(-9, 9); return Q(`d/dx of ${polyDisp([a, b, c])}?`, poly([2 * a, b])); },
-      () => { const a = rnd(1, 4), b = nz(-5, 5), n = rnd(2, 3), c = rnd(-3, 3); return Q(`f(x) = (${lin(a, b)})^${n}. Find f′(${c}).`, n * a * (a * c + b) ** (n - 1)); },
-    ],
-  },
-  integrals: {
-    name: "Integrals",
-    levels: [
-      () => { const n = rnd(1, 4), k = rnd(1, 6); const a = k * (n + 1); const body = poly([k, ...Array(n + 1).fill(0)]); return Q(`∫ ${a}x^${n} dx = ?  (e.g. 2x^3+C)`, [`${body}+c`, body]); },
-      () => { const a = rnd(1, 9), b = rnd(1, 8); const v = (a * b * b) / 2; if (!Number.isInteger(v)) return TOPICS.integrals.levels[1](); return Q(`∫ from 0 to ${b} of ${a === 1 ? "" : a}x dx = ?`, v); },
-      () => { const a = pick([3, 6, 9]), p = rnd(0, 3), q = rnd(p + 1, 5); return Q(`∫ from ${p} to ${q} of ${a}x² dx = ?`, (a * (q ** 3 - p ** 3)) / 3); },
-    ],
-  },
-  limits: {
-    name: "Limits",
-    levels: [
-      () => { const a = nz(-5, 5), b = nz(-9, 9), d = rnd(-9, 9), c = rnd(-5, 5); return Q(`lim (x→${c}) of ${polyDisp([a, b, d])} = ?`, a * c * c + b * c + d); },
-      () => { const c = nz(-9, 9); return Q(`lim (x→${c}) of (x² − ${c * c}) / (x ${c < 0 ? "+" : "−"} ${Math.abs(c)}) = ?`, 2 * c); },
-      () => { const a = nz(-9, 9), b = rnd(-9, 9), c = rnd(1, 9), d = rnd(-9, 9); return Q(`lim (x→∞) of (${polyDisp([a, b, 0])}) / (${polyDisp([c, 0, d])}) = ? (fraction if needed)`, fracAns(a, c)); },
-    ],
-  },
-  vectors: {
-    name: "Vectors",
-    levels: [
-      () => { const [p, q, r] = pick(TRIPLES.slice(0, 4)); const k = rnd(1, 3); const sp = pick([-1, 1]), sq = pick([-1, 1]); return Q(`Magnitude of the vector ⟨${sp * p * k}, ${sq * q * k}⟩?`, r * k); },
-      () => { const a = nz(-9, 9), b = nz(-9, 9), c = nz(-9, 9), d = nz(-9, 9); return Q(`⟨${a}, ${b}⟩ · ⟨${c}, ${d}⟩ = ?`, a * c + b * d); },
-      () => { const a = nz(-9, 9), b = nz(-9, 9), c = nz(-9, 9), d = nz(-9, 9), k = rnd(2, 4), m = rnd(1, 3); return Q(`u = ⟨${a}, ${b}⟩, v = ⟨${c}, ${d}⟩. Find ${k}u ${Math.random() < 0.5 ? "+" : "−"} ${m === 1 ? "" : m}v.`.replace(/(\d)u ([+−]) (\d*)v/, (s, kk, op, mm) => s), pairAns(k * a + m * c, k * b + m * d)); },
-    ],
-  },
-};
-
-// Vectors L3 needs the sign to match the prompt; rebuild it cleanly.
-TOPICS.vectors.levels[2] = () => {
-  const a = nz(-9, 9), b = nz(-9, 9), c = nz(-9, 9), d = nz(-9, 9), k = rnd(2, 4), m = rnd(1, 3);
-  const plus = Math.random() < 0.5;
-  const x = k * a + (plus ? m * c : -m * c), y = k * b + (plus ? m * d : -m * d);
-  return Q(`u = ⟨${a}, ${b}⟩, v = ⟨${c}, ${d}⟩. Find ${k}u ${plus ? "+" : "−"} ${m === 1 ? "" : m}v. Answer as (x, y).`, pairAns(x, y));
 };
 
 // Systems L1 written plainly (the first draft above was convoluted).
@@ -445,16 +403,20 @@ TOPICS.systems.levels[0] = () => {
 // Points per question by stadium position (1st..4th) and level (1..3), times the tier multiplier.
 const POINTS = [[10, 20, 30], [10, 20, 30], [20, 30, 40], [30, 40, 50]];
 
+// Platinum was removed and its topics folded into the tier below it, cascading all the
+// way up: Platinum → Crystal → Emerald → Amethyst → Ruby → Obsidian. Obsidian's own old
+// topics (derivatives, integrals, limits, vectors) fell off the end and are no longer used.
+// Ruby and Obsidian (with their new, post-cascade topics) also got an easier Coronation:
+// more forgiving maxWrong and a level mix weighted toward level 2 over level 3.
 const TIER_DEFS = [
   { name: "Bronze", mult: 1, xp: 800, topics: ["addition", "subtraction", "multiplication", "division"], theme: ["#ffd1e8", "#ff8fc8", "#2ea86a"] },
   { name: "Silver", mult: 10, xp: 8000, topics: ["fractions", "orderOps", "exponents", "linear"], theme: ["#f8fafc", "#cbd5e1", "#3b82f6"] },
   { name: "Gold", mult: 100, xp: 80000, topics: ["areaPerimeter", "distance", "circles", "pythagorean"], theme: ["#fff7cc", "#fbbf24", "#b45309"] },
-  { name: "Platinum", mult: 1000, xp: 800000, topics: ["sectors", "functions", "graphing", "factoring"], theme: ["#ecfeff", "#a5f3fc", "#0e7490"] },
-  { name: "Crystal", mult: 1e4, xp: 8e6, topics: ["multiplyPoly", "systems", "quadratics", "complexIntro"], theme: ["#eef2ff", "#c7d2fe", "#7c3aed"] },
-  { name: "Emerald", mult: 1e5, xp: 8e7, topics: ["addComplex", "mulComplex", "conjugates", "divComplex"], theme: ["#d1fae5", "#34d399", "#047857"] },
-  { name: "Amethyst", mult: 1e6, xp: 8e8, topics: ["graphQuad", "stats1", "stats2", "stats3"], theme: ["#f3e8ff", "#c084fc", "#6b21a8"] },
-  { name: "Ruby", mult: 1e7, xp: 8e9, topics: ["trig", "lawCos", "lawSines", "sinusoid"], theme: ["#ffe4e6", "#fb7185", "#9f1239"] },
-  { name: "Obsidian", mult: 1e8, xp: 8e10, topics: ["derivatives", "integrals", "limits", "vectors"], theme: ["#cbd5e1", "#64748b", "#991b1b"] },
+  { name: "Crystal", mult: 1e4, xp: 8e6, topics: ["sectors", "functions", "graphing", "factoring"], theme: ["#eef2ff", "#c7d2fe", "#7c3aed"] },
+  { name: "Emerald", mult: 1e5, xp: 8e7, topics: ["multiplyPoly", "systems", "quadratics", "complexIntro"], theme: ["#d1fae5", "#34d399", "#047857"] },
+  { name: "Amethyst", mult: 1e6, xp: 8e8, topics: ["addComplex", "mulComplex", "conjugates", "divComplex"], theme: ["#f3e8ff", "#c084fc", "#6b21a8"] },
+  { name: "Ruby", mult: 1e7, xp: 8e9, topics: ["graphQuad", "stats1", "stats2", "stats3"], theme: ["#ffe4e6", "#fb7185", "#9f1239"], maxWrong: 4, drawLevel2: 7, drawLevel3: 3 },
+  { name: "Obsidian", mult: 1e8, xp: 8e10, topics: ["trig", "lawCos", "lawSines", "sinusoid"], theme: ["#cbd5e1", "#64748b", "#991b1b"], maxWrong: 4, drawLevel2: 7, drawLevel3: 3 },
   { name: "Diamond", tournament: true, theme: ["#ffffff", "#bae6fd", "#0284c7"] },
 ];
 
@@ -471,7 +433,14 @@ for (const def of TIER_DEFS) {
   tiers[def.name] = {
     planet: "M",
     theme: def.theme,
-    coronation: { name: "Coronation Series", xpRequired: def.xp, cooldownHours: 12, maxWrong: 2, drawLevel2: 5, drawLevel3: 5 },
+    coronation: {
+      name: "Coronation Series",
+      xpRequired: def.xp,
+      cooldownHours: 12,
+      maxWrong: def.maxWrong ?? 2,
+      drawLevel2: def.drawLevel2 ?? 5,
+      drawLevel3: def.drawLevel3 ?? 5,
+    },
     stadiums: def.topics.map((key, i) => {
       const t = TOPICS[key];
       return {
