@@ -173,6 +173,11 @@ def get_player(player_id: int):
     ).fetchone()
     if row is None:
         abort(404)
+    from .social import friend_state, friends_of, record_view
+
+    record_view(get_db(), me["id"], player_id)
     profile = public_profile(row)
     profile["you"] = row["id"] == me["id"]
+    profile["friends"] = friends_of(get_db(), player_id)
+    profile["friendship"] = friend_state(get_db(), me["id"], player_id)
     return jsonify(profile)

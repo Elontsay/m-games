@@ -3,7 +3,7 @@
 Beating Finn only makes you a Tier 1 Ruler. Once a month you get up to three timed
 attempts (skipping a question costs a time penalty); your fastest attempt is your
 entry. You're racing every other ruler who attempts that same month -- whoever has
-the single fastest time when the month closes is promoted a ruler tier. Right now
+the single fastest time when the month closes is promoted to Tier 2. Right now
 that's usually just whoever showed up, since there's no matchmaking or live
 opponents yet -- but it's real accounts racing real accounts, not a scripted bot.
 """
@@ -21,6 +21,8 @@ MAX_ATTEMPTS_PER_PERIOD = 3
 SKIP_PENALTY_SECONDS = 60
 MAX_TIME_SECONDS = 24 * 60 * 60  # sanity cap against bad/hostile input
 LEADERBOARD_SIZE = 10
+# Winning a month takes you to Tier 2 and no further: Tier 3 is the Hunt's prize.
+ARENA_MAX_TIER = 2
 
 
 def current_period() -> str:
@@ -29,7 +31,8 @@ def current_period() -> str:
 
 def _close_period(db, period: str) -> None:
     """Settle one month: whoever has the fastest single attempt wins and is
-    promoted a ruler tier. If nobody attempted, there's simply no winner.
+    promoted to Tier 2. Racing does not go past Tier 2 -- Tier 3 is earned by
+    solving Hunt for the Traitor. If nobody attempted, there's no winner.
     Idempotent -- does nothing once a period already has a result row."""
     if db.execute("SELECT 1 FROM arena_results WHERE period = ?", (period,)).fetchone():
         return
@@ -44,7 +47,7 @@ def _close_period(db, period: str) -> None:
     winner_id = best["user_id"] if best else None
     winner_time = best["best_time"] if best else None
     if winner_id is not None:
-        db.execute("UPDATE users SET ruler_tier = ruler_tier + 1 WHERE id = ?", (winner_id,))
+        db.execute("UPDATE users SET tier = MAX(tier, ?) WHERE id = ?", (ARENA_MAX_TIER, winner_id))
     db.execute(
         "INSERT INTO arena_results (period, winner_user_id, time_seconds, closed_at) VALUES (?, ?, ?, ?)",
         (period, winner_id, winner_time, time.time()),
@@ -114,7 +117,7 @@ def _status(user) -> dict:
     ).fetchall()
     best = min((a["time_seconds"] for a in attempts), default=None)
     return {
-        "rulerTier": user["ruler_tier"] or 0,
+        "tier": user["tier"] or 0,
         "period": period,
         "attemptsUsed": len(attempts),
         "attemptsLeft": max(0, MAX_ATTEMPTS_PER_PERIOD - len(attempts)),
@@ -129,8 +132,8 @@ def _status(user) -> dict:
 @arena_bp.get("/status")
 def status():
     user = require_user()
-    if (user["ruler_tier"] or 0) < 1:
-        return jsonify(rulerTier=0, entered=False)
+    if (user["tier"] or 0) < 1:
+        return jsonify(tier=0, entered=False)
     return jsonify(entered=True, **_status(user))
 
 
@@ -139,8 +142,8 @@ def enter():
     """Called once, right after the player first beats Finn."""
     user = require_active_user()
     db = get_db()
-    if (user["ruler_tier"] or 0) < 1:
-        db.execute("UPDATE users SET ruler_tier = 1 WHERE id = ?", (user["id"],))
+    if (user["tier"] or 0) < 1:
+        db.execute("UPDATE users SET tier = 1 WHERE id = ?", (user["id"],))
         db.commit()
         user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
     return jsonify(entered=True, **_status(user))
@@ -149,7 +152,7 @@ def enter():
 @arena_bp.post("/attempt")
 def attempt():
     user = require_active_user()
-    if (user["ruler_tier"] or 0) < 1:
+    if (user["tier"] or 0) < 1:
         abort(403, "Beat Finn first to enter the Arena of Champions.")
     db = get_db()
     _close_elapsed_periods(db)

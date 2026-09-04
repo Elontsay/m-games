@@ -9,7 +9,7 @@ import time
 
 from flask import Blueprint, abort, jsonify, request
 
-from .auth import admin_tier, current_user, require_active_user, require_tier
+from .auth import current_user, require_active_user, require_tier, tier_of
 from .db import get_db, get_user
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
@@ -66,7 +66,7 @@ def list_contests():
     else sees only the ones they created plus the approved catalog."""
     user = require_tier(1)
     db = get_db()
-    if admin_tier(user) >= 3:
+    if tier_of(user) >= 3:
         rows = db.execute("SELECT * FROM custom_contests ORDER BY created_at DESC").fetchall()
     else:
         rows = db.execute(
@@ -219,7 +219,7 @@ def ban_user(user_id: int):
     target = get_user(user_id)
     if target is None:
         abort(404)
-    if admin_tier(target) >= 3:
+    if tier_of(target) >= 3:
         abort(403, "Cannot ban a Tier 3+ admin.")
     db = get_db()
     db.execute("UPDATE users SET banned = 1 WHERE id = ?", (user_id,))
@@ -255,6 +255,6 @@ def promote_user(user_id: int):
     if tier not in (0, 1, 2, 3):
         abort(400, "tier must be 0-3 (Tier 4 is reserved for the owner's account).")
     db = get_db()
-    db.execute("UPDATE users SET admin_tier = ? WHERE id = ?", (tier, user_id))
+    db.execute("UPDATE users SET tier = ? WHERE id = ?", (tier, user_id))
     db.commit()
-    return jsonify(ok=True, userId=user_id, adminTier=tier)
+    return jsonify(ok=True, userId=user_id, tier=tier)

@@ -6,6 +6,8 @@ import time
 from flask import current_app, g
 
 SCHEMA = """
+-- `tier` is one ladder for both rank and power: 0 = not a ruler yet, 1 = beat
+-- Finn, 2 = won an Arena month, 3 = solved Hunt for the Traitor, 4 = the owner.
 CREATE TABLE IF NOT EXISTS users (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     provider   TEXT NOT NULL,
@@ -14,8 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
     name       TEXT,
     picture    TEXT,
     created_at REAL NOT NULL,
-    admin_tier INTEGER NOT NULL DEFAULT 0,
-    ruler_tier INTEGER NOT NULL DEFAULT 0,
+    tier       INTEGER NOT NULL DEFAULT 0,
     banned     INTEGER NOT NULL DEFAULT 0,
     UNIQUE (provider, subject)
 );
@@ -84,13 +85,60 @@ CREATE TABLE IF NOT EXISTS wallet_credits (
     created_at REAL NOT NULL,
     claimed_at REAL
 );
+
+-- ---- Social: friends and profile visits --------------------------------------
+-- One row per pair, with user_a < user_b so a pair can't be stored twice.
+CREATE TABLE IF NOT EXISTS friendships (
+    user_a       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_b       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    requested_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at   REAL NOT NULL,
+    PRIMARY KEY (user_a, user_b)
+);
+CREATE TABLE IF NOT EXISTS profile_views (
+    viewer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    viewed_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    viewed_at REAL NOT NULL,
+    PRIMARY KEY (viewer_id, viewed_id)
+);
+
+-- ---- Hunt for the Traitor ----------------------------------------------------
+-- Where an account was seen and when. The Hunt's cabin clue reads from this.
+CREATE TABLE IF NOT EXISTS activity_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    event       TEXT NOT NULL,
+    location    TEXT,
+    occurred_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_log(user_id);
+
+-- Results of the Ruler Qualifier. Agent Y's entry matches the leaked answer key.
+CREATE TABLE IF NOT EXISTS qualifier_entries (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    answers  TEXT NOT NULL,
+    score    INTEGER NOT NULL,
+    won      INTEGER NOT NULL DEFAULT 0,
+    taken_at REAL NOT NULL
+);
+
+-- Accusations made during the Hunt. Naming an innocent wipes the hunter's set,
+-- so the six have to be identified from the clues rather than brute-forced.
+CREATE TABLE IF NOT EXISTS hunt_accusations (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    accused_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    correct    INTEGER NOT NULL,
+    created_at REAL NOT NULL
+);
 """
 
 # Columns added after the initial release: keep existing local databases working
 # without wiping them (SQLite has no "ADD COLUMN IF NOT EXISTS").
 _MIGRATIONS = [
-    ("users", "admin_tier", "INTEGER NOT NULL DEFAULT 0"),
-    ("users", "ruler_tier", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "tier", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "banned", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
@@ -100,6 +148,12 @@ def _migrate(db: sqlite3.Connection) -> None:
         cols = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
         if column not in cols:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    # Rank and power used to be two separate ladders; fold the old pair into the
+    # single `tier` by keeping whichever was higher. The dead columns are left in
+    # place (SQLite DROP COLUMN is not available everywhere) but never read.
+    user_cols = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
+    if {"admin_tier", "ruler_tier"} <= user_cols:
+        db.execute("UPDATE users SET tier = MAX(tier, admin_tier, ruler_tier)")
     db.commit()
 
 

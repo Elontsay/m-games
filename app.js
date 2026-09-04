@@ -549,7 +549,7 @@
     show(`<main class="screen space">
       <div class="topbar">
         <div class="brand">M Games</div>
-        <div class="topbar-right">${adminButton()}${councilButton()}${travelButton()}<button class="btn sm secondary" data-mmc title="M Math Competition">📋 MMC</button><button class="btn sm secondary" data-games title="Other games">🎮 Games</button>${achButton()}${profileCard()}</div>
+        <div class="topbar-right">${adminButton()}${councilButton()}${huntButton()}${travelButton()}<button class="btn sm secondary" data-mmc title="M Math Competition">📋 MMC</button><button class="btn sm secondary" data-games title="Other games">🎮 Games</button>${achButton()}${profileCard()}</div>
       </div>
       <div class="planet-area">
         <div class="planet" ${themeStyle(t)}>
@@ -577,6 +577,7 @@
     on("[data-achievements]", "click", () => achievementsScreen(planet));
     on("[data-admin]", "click", () => adminPanel(planet));
     on("[data-council]", "click", () => councilScreen(planet));
+    on("[data-hunt]", "click", () => huntScreen(planet));
     on("[data-games]", "click", () => games(planet));
     on("[data-travel]", "click", () => travel(planet));
     on("[data-profile]", "click", () => profileScreen(planet));
@@ -697,9 +698,16 @@
   function adminButton() {
     return isAdmin() ? `<button class="btn sm secondary" data-admin title="Admin hacks">⚙ Admin</button>` : "";
   }
+  // One ladder for rank and power: 1 beat Finn, 2 won an Arena month, 3 solved
+  // Hunt for the Traitor, 4 the owner. The server is the authority; this is only
+  // for deciding what to show.
+  const myTier = () => (API.me ? API.me.tier || 0 : 0);
   function councilButton() {
-    const t = API.me ? API.me.adminTier || 0 : 0;
+    const t = myTier();
     return t >= 1 ? `<button class="btn sm secondary" data-council title="Arena governance">🏛 Tier ${t}</button>` : "";
+  }
+  function huntButton() {
+    return myTier() >= 2 ? `<button class="btn sm secondary" data-hunt title="Hunt for the Traitor">🔎 Hunt</button>` : "";
   }
   function adminAutoBeatFinn() {
     if (!isAdmin()) return;
@@ -1525,7 +1533,7 @@
   function playerScreen(id, back) {
     show(`<main class="screen">${bar("Player")}<div class="content"><p class="muted">Loading…</p></div></main>`);
     apiJson(`/api/players/${id}`).then((p) => {
-      const canReport = API.me && (API.me.adminTier || 0) >= 2 && !p.you;
+      const canReport = myTier() >= 2 && !p.you;
       show(`<main class="screen">${bar(p.name)}
         <div class="content">
           ${profileHero(p)}
@@ -2021,7 +2029,7 @@
     show(`<main class="screen space">
       <div class="topbar">
         <div class="brand">M Games</div>
-        <div class="topbar-right">${adminButton()}${councilButton()}${travelButton()}<button class="btn sm secondary" data-mmc title="M Math Competition">📋 MMC</button><button class="btn sm secondary" data-games title="Other games">🎮 Games</button>${achButton()}${profileCard()}</div>
+        <div class="topbar-right">${adminButton()}${councilButton()}${huntButton()}${travelButton()}<button class="btn sm secondary" data-mmc title="M Math Competition">📋 MMC</button><button class="btn sm secondary" data-games title="Other games">🎮 Games</button>${achButton()}${profileCard()}</div>
       </div>
       <div class="planet-area">
         <div class="planet arena" ${themeStyle(t)}>
@@ -2053,6 +2061,7 @@
     on("[data-achievements]", "click", () => achievementsScreen(diamond));
     on("[data-admin]", "click", () => adminPanel(diamond));
     on("[data-council]", "click", () => councilScreen(diamond));
+    on("[data-hunt]", "click", () => huntScreen(diamond));
     on("[data-games]", "click", () => games(diamond));
     on("[data-travel]", "click", () => travel(diamond));
     on("[data-profile]", "click", () => profileScreen(diamond));
@@ -2272,7 +2281,7 @@
     const youLead = !!(leader && leader.you);
     show(`<main class="screen">${bar("Arena of Champions")}
       <div class="content">
-        <h2>👑 Tier ${status.rulerTier} Ruler</h2>
+        <h2>👑 Tier ${status.tier} Ruler</h2>
         <p class="muted">Monthly ladder · ${esc(status.period)} · you're racing every ruler who attempts this month — fastest single time wins.</p>
         <div class="times">
           <div class="time ${youLead ? "win" : ""}">
@@ -2418,7 +2427,7 @@
 
   // ---- Arena governance (Tier 1-4) -------------------------------------------
   async function councilScreen(back) {
-    const tier = API.me ? API.me.adminTier || 0 : 0;
+    const tier = myTier();
     if (tier < 1) return back();
 
     show(`<main class="screen">${bar("Arena Governance")}<div class="content"><p class="muted">Loading…</p></div></main>`);
@@ -2531,6 +2540,135 @@
         });
       } catch {}
       refresh();
+    });
+  }
+
+  // ---- Hunt for the Traitor (Tier 2 → Tier 3) --------------------------------
+  // Finn opens the directory: profiles, friends, who viewed whom, where accounts
+  // have been. Six of them are the ring described in the letters. Naming an
+  // innocent wipes the case file, so this has to be read, not brute-forced.
+  const achName = (id) => (ACHIEVEMENTS.find((a) => a.id === id) || {}).name || id;
+  const fmtWhen = (ts) => (ts
+    ? new Date(ts * 1000).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+    : "—");
+
+  async function huntScreen(back, notice) {
+    if (myTier() < 2) return back();
+    show(`<main class="screen">${bar("Hunt for the Traitor")}
+      <div class="content"><p class="muted">Opening the case file…</p></div></main>`);
+
+    const [statusRes, dossierRes] = await Promise.allSettled([
+      apiJson("/api/hunt/status"),
+      apiJson("/api/hunt/dossiers"),
+    ]);
+    if (statusRes.status !== "fulfilled") {
+      show(`<main class="screen">${bar("Hunt for the Traitor")}
+        <div class="content">${finn("I can't get to the case file right now. Try again in a moment.")}</div>
+        <div class="footer"><button class="btn secondary" data-back>Back</button></div>
+      </main>`);
+      on("[data-back]", "click", () => back());
+      return;
+    }
+    const hunt = statusRes.value;
+    const people = dossierRes.status === "fulfilled" ? dossierRes.value.dossiers : [];
+    const namedIds = hunt.named.map((n) => n.userId);
+
+    const letter = (l) => `<div class="letter">
+      <div class="letter-head">
+        <strong>Letter #${l.n}</strong>
+        <span class="small muted">${esc(l.from)} → ${esc(l.to)}</span>
+      </div>
+      <pre class="cipher">${esc(l.body)}</pre>
+      ${l.attachment ? `<div class="small muted"><strong>${esc(l.attachment.label)}</strong> — ${l.attachment.rows.map(esc).join(" · ")}</div>` : ""}
+      <div class="small muted" style="margin-top:0.5rem">🔑 ${esc(l.hint)} · <a href="${esc(l.tool)}" target="_blank" rel="noopener">open decoder</a></div>
+    </div>`;
+
+    const row = (p) => {
+      const done = namedIds.includes(p.id);
+      return `<button class="player-row ${done ? "you" : ""}" data-dossier="${p.id}">
+        <span class="player-body">
+          <span class="player-name">${esc(p.name)}${done ? ` <span class="tag">named</span>` : ""}</span>
+          <span class="small muted">Tier ${p.accountTier} · ${p.dragonsDefeated} dragon${p.dragonsDefeated === 1 ? "" : "s"} · ${p.petsOwned} pet${p.petsOwned === 1 ? "" : "s"} · ${p.achievements} achievement${p.achievements === 1 ? "" : "s"}</span>
+        </span>
+      </button>`;
+    };
+
+    show(`<main class="screen">${bar("Hunt for the Traitor")}
+      <div class="content">
+        ${finn(hunt.solved
+          ? "That's all six. The ring is finished, and Tier 3 is yours — you can act on reports now, not just file them."
+          : hunt.briefing)}
+        ${notice ? `<p class="notice-light">${esc(notice)}</p>` : ""}
+        <h2>🔎 Named ${hunt.named.length} of ${hunt.needed}</h2>
+        ${hunt.named.length
+          ? `<p class="small muted">So far: ${hunt.named.map((n) => esc(n.name)).join(", ")}</p>`
+          : `<p class="small muted">Name an innocent player and the case file is thrown out — every name you've given me goes with it.</p>`}
+
+        <h3 style="margin-top:1.5rem">The intercepted letters</h3>
+        ${hunt.letters.map(letter).join("")}
+
+        <h3 style="margin-top:1.5rem">The directory</h3>
+        <p class="small muted">Every account, with its friends, its visitors, and where it has been. Open a file to read it.</p>
+        ${people.map(row).join("")}
+      </div>
+      <div class="footer"><button class="btn secondary" data-back>Back</button></div>
+    </main>`);
+    on("[data-back]", "click", () => back());
+    on("[data-dossier]", "click", (e) => {
+      const id = Number(e.currentTarget.dataset.dossier);
+      huntDossier(people.find((p) => p.id === id), hunt, back);
+    });
+  }
+
+  function huntDossier(p, hunt, back) {
+    if (!p) return huntScreen(back);
+    const named = hunt.named.some((n) => n.userId === p.id);
+    const line = (label, value) => `<div class="admin-row"><div><strong>${label}</strong></div><div class="small" style="text-align:right">${value}</div></div>`;
+
+    show(`<main class="screen">${bar(p.name)}
+      <div class="content">
+        <h2>${esc(p.name)}</h2>
+        <p class="small muted">Tier ${p.accountTier} · ${esc(p.tier)} tier · ${fmtXp(p.xp)} XP · joined ${esc(fmtDay(p.joined))}</p>
+
+        ${line("Dragon bosses beaten", p.dragonsDefeated)}
+        ${line("Pets owned", p.petsOwned)}
+        ${line("Achievements", (p.achievementIds || []).length ? (p.achievementIds || []).map((a) => esc(achName(a))).join(", ") : "none")}
+        ${line("Friends", p.friends.length
+          ? p.friends.map((f) => `${esc(f.name)}${f.status === "pending" ? ` <span class="muted">(request ${f.requestedByThem ? "they sent" : "sent to them"}, not accepted)</span>` : ""}`).join("<br>")
+          : "none")}
+        ${line("Viewed their profile", p.viewedBy.length ? p.viewedBy.map((v) => esc(v.name)).join(", ") : "nobody")}
+        ${line("Movements", p.activity.length
+          ? p.activity.map((a) => `${esc(a.event)} ${esc(a.location)}<br><span class="muted">${esc(fmtWhen(a.at))}</span>`).join("<br>")
+          : "nothing logged")}
+        ${line("Ruler Qualifier", p.qualifier
+          ? `answers ${p.qualifier.answers.join(", ")}<br><span class="muted">scored ${p.qualifier.score}/5${p.qualifier.won ? " · won" : ""}</span>`
+          : "did not enter")}
+      </div>
+      <div class="footer between">
+        <button class="btn secondary" data-back>Back to the directory</button>
+        ${hunt.solved || named
+          ? `<button class="btn" disabled>${named ? "Already named" : "Case closed"}</button>`
+          : `<button class="btn" data-accuse>Name as traitor</button>`}
+      </div>
+    </main>`);
+    on("[data-back]", "click", () => huntScreen(back));
+    on("[data-accuse]", "click", async () => {
+      if (!(await askConfirm(`Name ${p.name} as one of the six? If they are innocent, every name you have given Finn is thrown out.`))) return;
+      let res = null;
+      try {
+        res = await apiJson("/api/hunt/accuse", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: p.id }),
+        });
+      } catch {}
+      if (!res) return huntScreen(back, "That accusation never reached Finn. Try again.");
+      if (res.solved) {
+        if (API.me) API.me.tier = res.tier;
+        return huntScreen(back, `That is all six. You are a Tier ${res.tier} ruler now.`);
+      }
+      if (res.correct) return huntScreen(back, `${p.name} was one of them. ${res.named.length} of ${res.needed} named.`);
+      return huntScreen(back, `${p.name} was innocent. The case file is back to nothing — start again.`);
     });
   }
 
