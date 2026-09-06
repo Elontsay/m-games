@@ -896,10 +896,19 @@
             </div>
             <button class="btn" data-meteor ${canAfford(MS.price) ? "" : "disabled"} title="${canAfford(MS.price) ? "" : `You need ${fmtXp(MS.price)} XP`}">Play · ${fmtXp(MS.price)} XP</button>
           </div>
+          <div class="game-card">
+            <div class="game-icon">📝</div>
+            <div>
+              <h3>Player contests</h3>
+              <p class="small muted">Contests written by other rulers and approved by a Tier 3. Each question pays its own MBucks, and you get one sitting at each.</p>
+            </div>
+            <button class="btn" data-contests>Browse</button>
+          </div>
         </div>
       </div>
       <div class="footer between"><button class="btn secondary" data-back>Back</button></div>
     </main>`);
+    on("[data-contests]", "click", () => contestList(() => games(back)));
     on("[data-dragon]", "click", () => dragonHub(back));
     on("[data-meteor]", "click", () => {
       if (!canAfford(MS.price)) return;
@@ -2429,7 +2438,7 @@
   }
 
   // ---- Arena governance (Tier 1-4) -------------------------------------------
-  async function councilScreen(back) {
+  async function councilScreen(back, notice) {
     const tier = myTier();
     if (tier < 1) return back();
 
@@ -2442,15 +2451,20 @@
     const reports = reportsData.status === "fulfilled" ? reportsData.value.reports.filter((r) => r.status === "open") : [];
 
     const inputStyle = "padding:0.6rem;border:1px solid #cbd5e1;border-radius:0.5rem;font:inherit";
-    const contestRow = (c) => `<div class="admin-row">
-      <div>
-        <strong>${esc(c.title)}</strong> <span class="small muted">· ${esc(c.status)}${c.mbucksReward ? ` · ${fmtXp(c.mbucksReward)} MBucks` : ""}</span>
-        <div class="small muted">${esc(c.description)}</div>
+    const contestRow = (c) => `<div class="admin-row" style="flex-direction:column;align-items:stretch;gap:0.5rem">
+      <div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start">
+        <div>
+          <strong>${esc(c.title)}</strong> <span class="small muted">· ${esc(c.status)} · ${c.questionCount} question${c.questionCount === 1 ? "" : "s"}${c.mbucksReward ? ` · pays ${fmtXp(c.mbucksReward)} MBucks` : ""}</span>
+          <div class="small muted">${esc(c.description)}</div>
+        </div>
+        ${tier >= 3 && c.status === "pending" ? `<span style="display:flex;gap:0.5rem;flex:none">
+          <button class="btn sm" data-approve="${c.id}">Approve</button>
+          <button class="btn sm secondary" data-reject="${c.id}">Reject</button>
+        </span>` : ""}
       </div>
-      ${tier >= 3 && c.status === "pending" ? `<span style="display:flex;gap:0.5rem">
-        <button class="btn sm" data-approve="${c.id}">Approve</button>
-        <button class="btn sm secondary" data-reject="${c.id}">Reject</button>
-      </span>` : ""}
+      ${c.questions.length && c.questions.some((q) => q.a !== undefined) ? `<ol class="small muted" style="margin:0;padding-left:1.25rem">
+        ${c.questions.map((q) => `<li>${esc(q.q)} → <strong>${esc(q.a)}</strong> · ${fmtXp(q.mbucks)} MBucks</li>`).join("")}
+      </ol>` : ""}
     </div>`;
     const reportRow = (r) => `<div class="admin-row">
       <div>
@@ -2466,13 +2480,20 @@
     show(`<main class="screen">${bar("Arena Governance")}
       <div class="content">
         <h2>🏛 Tier ${tier} Governance</h2>
-        <p class="small muted">Tier 1+ can propose contests. Tier 3 approves them and bans reported players. Tier 4 (the owner) hands out Tier 3.</p>
+        <p class="small muted">Tier 1+ can propose contests. Tier 3 approves them and reviews reports. Tier 4 (the owner) bans players and hands out Tier 3.</p>
+        ${notice ? `<p class="notice-light">${esc(notice)}</p>` : ""}
 
         <h3 style="margin-top:1.5rem">Propose a contest</h3>
+        <p class="small muted">Write it out in full: every question, the answer you'll accept, and what that
+          question pays. Separate alternative answers with <code>|</code>, as in <code>5 | five</code>.</p>
         <form data-contest-form class="admin-row" style="flex-direction:column;align-items:stretch;gap:0.5rem">
           <input data-title placeholder="Title" maxlength="80" style="${inputStyle}">
           <textarea data-desc rows="2" placeholder="Description" maxlength="1000" style="${inputStyle}"></textarea>
-          <input data-reward type="number" min="0" placeholder="MBucks reward on completion" style="${inputStyle}">
+          <div data-questions></div>
+          <div style="display:flex;gap:0.5rem;align-items:center">
+            <button type="button" class="btn sm secondary" data-add-q>+ Add question</button>
+            <span class="small muted" data-total></span>
+          </div>
           <button type="submit" class="btn sm">Submit for approval</button>
         </form>
 
@@ -2498,21 +2519,56 @@
 
     const refresh = () => councilScreen(back);
     on("[data-back]", "click", () => back());
+
+    // The authored questions, as rows the writer can add to and take away.
+    const qBox = app.querySelector("[data-questions]");
+    const totalBox = app.querySelector("[data-total]");
+    const readQuestions = () => [...qBox.querySelectorAll("[data-qrow]")].map((row) => ({
+      q: row.querySelector("[data-q]").value.trim(),
+      a: row.querySelector("[data-a]").value.trim(),
+      mbucks: Number(row.querySelector("[data-m]").value) || 0,
+    }));
+    function paintTotal() {
+      const rows = readQuestions();
+      totalBox.textContent = `${rows.length} question${rows.length === 1 ? "" : "s"} · pays ${fmtXp(rows.reduce((t, r) => t + r.mbucks, 0))} MBucks in total`;
+    }
+    function addRow() {
+      if (qBox.querySelectorAll("[data-qrow]").length >= 10) return;
+      const row = document.createElement("div");
+      row.dataset.qrow = "";
+      row.style.cssText = "display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center";
+      row.innerHTML = `
+        <input data-q placeholder="Question" maxlength="1000" style="${inputStyle};flex:2 1 14rem">
+        <input data-a placeholder="Answer (a | b)" maxlength="120" style="${inputStyle};flex:1 1 8rem">
+        <input data-m type="number" min="0" placeholder="MBucks" style="${inputStyle};width:7rem">
+        <button type="button" class="btn sm secondary" data-drop>Remove</button>`;
+      qBox.appendChild(row);
+      row.querySelector("[data-drop]").addEventListener("click", () => { row.remove(); paintTotal(); });
+      row.querySelector("[data-m]").addEventListener("input", paintTotal);
+      paintTotal();
+    }
+    addRow();
+    app.querySelector("[data-add-q]").addEventListener("click", addRow);
+
     app.querySelector("[data-contest-form]").addEventListener("submit", async (e) => {
       e.preventDefault();
       const title = app.querySelector("[data-title]").value.trim();
       const description = app.querySelector("[data-desc]").value.trim();
-      const mbucksReward = Number(app.querySelector("[data-reward]").value) || 0;
-      if (!title || !description) return;
+      const questions = readQuestions().filter((r) => r.q && r.a);
+      if (!title || !description) return refresh0("Give the contest a title and a description.");
+      if (!questions.length) return refresh0("Every contest needs at least one question with an answer.");
       try {
         await apiJson("/api/admin/contests", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, description, mbucksReward }),
+          body: JSON.stringify({ title, description, questions }),
         });
-      } catch {}
+      } catch {
+        return refresh0("That contest wasn't accepted. Check the questions and try again.");
+      }
       refresh();
     });
+    function refresh0(msg) { councilScreen(back, msg); }
     on("[data-approve]", "click", async (e) => {
       try { await apiJson(`/api/admin/contests/${e.currentTarget.dataset.approve}/approve`, { method: "POST" }); } catch {}
       refresh();
@@ -2543,6 +2599,112 @@
         });
       } catch {}
       refresh();
+    });
+  }
+
+  // ---- Player-written contests ------------------------------------------------
+  // Approved contests anyone can sit, once each. The answer key never reaches the
+  // browser: what you typed goes to the server and comes back marked, so each
+  // question pays only if it was actually right.
+  async function contestList(back, notice) {
+    if (!API.me) {
+      show(`<main class="screen">${bar("Player contests")}
+        <div class="content">${finn("These are written by signed-in rulers and pay real MBucks, so you'll need to sign in to take one.")}</div>
+        <div class="footer between">
+          <button class="btn secondary" data-back>Back</button>
+          <a class="btn" href="/login">${API.google ? "Sign in with Google" : "Sign in"}</a>
+        </div>
+      </main>`);
+      on("[data-back]", "click", () => back());
+      return;
+    }
+    show(`<main class="screen">${bar("Player contests")}<div class="content"><p class="muted">Loading…</p></div></main>`);
+    let list = [];
+    try { list = (await apiJson("/api/admin/contests/approved")).contests || []; } catch {}
+
+    show(`<main class="screen">${bar("Player contests")}
+      <div class="content">
+        <h2>📝 Player contests</h2>
+        <p class="small muted">Written by other rulers, approved by a Tier 3. One sitting each — every question pays its own MBucks.</p>
+        ${notice ? `<p class="notice-light">${esc(notice)}</p>` : ""}
+        ${list.length ? list.map((c) => `<div class="admin-row">
+          <div>
+            <strong>${esc(c.title)}</strong>
+            <div class="small muted">${esc(c.description)}</div>
+            <div class="small muted">${c.questionCount} question${c.questionCount === 1 ? "" : "s"} · up to ${fmtXp(c.mbucksReward)} MBucks</div>
+          </div>
+          <button class="btn sm" data-take="${c.id}">Take it</button>
+        </div>`).join("") : `<p class="small muted">Nobody has had a contest approved yet.</p>`}
+      </div>
+      <div class="footer"><button class="btn secondary" data-back>Back</button></div>
+    </main>`);
+    on("[data-back]", "click", () => back());
+    on("[data-take]", "click", (e) => contestPlay(Number(e.currentTarget.dataset.take), back));
+  }
+
+  async function contestPlay(id, back) {
+    let contest = null;
+    let why = "";
+    try {
+      contest = await apiJson(`/api/admin/contests/${id}/play`);
+    } catch (err) {
+      why = String(err.message) === "409" ? "You've already taken that one — one sitting each."
+        : String(err.message) === "403" ? "That's your own contest, so you can't earn from it."
+        : "That contest couldn't be opened.";
+    }
+    if (!contest) return contestList(back, why);
+
+    show(`<main class="screen">${bar(contest.title)}
+      <div class="content">
+        <h2>${esc(contest.title)}</h2>
+        <p class="small muted">${esc(contest.description)}</p>
+        <p class="small muted">One sitting, and each question pays on its own. Worth up to ${fmtXp(contest.mbucksReward)} MBucks.</p>
+        ${contest.questions.map((q, i) => `<div class="question">
+          <div class="qhead"><strong>Question ${i + 1} <span class="muted small">· ${fmtXp(q.mbucks)} MBucks</span></strong></div>
+          <p class="qtext">${esc(q.q)}</p>
+          <form class="answer" data-answer="${i}" onsubmit="return false">
+            <input type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Your answer" aria-label="Answer to question ${i + 1}">
+          </form>
+        </div>`).join("")}
+      </div>
+      <div class="footer between">
+        <button class="btn secondary" data-back>Back</button>
+        <button class="btn" data-submit>Hand it in</button>
+      </div>
+    </main>`);
+    on("[data-back]", "click", () => contestList(back));
+    on("[data-submit]", "click", async () => {
+      if (!(await askConfirm("Hand this in? You only get one sitting."))) return;
+      const answers = [...app.querySelectorAll("[data-answer] input")].map((i) => i.value);
+      let result = null;
+      try {
+        result = await apiJson(`/api/admin/contests/${id}/submit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ answers }),
+        });
+      } catch {}
+      if (!result) return contestList(back, "That submission didn't reach the server — nothing was recorded.");
+      contestResult(result, back);
+    });
+  }
+
+  function contestResult(r, back) {
+    show(`<main class="screen">${bar(r.title)}
+      <div class="content">
+        ${finn(r.mbucksEarned > 0
+          ? `${r.correct} of ${r.total} right — that's ${fmtXp(r.mbucksEarned)} MBucks in your pocket.`
+          : "Nothing landed this time. The MBucks only pay out for correct answers.")}
+        <h2>${r.correct} / ${r.total} · ${fmtXp(r.mbucksEarned)} of ${fmtXp(r.mbucksPossible)} MBucks</h2>
+        ${r.marks.map((m, i) => `<div class="result-row"><span>
+          ${i + 1}. ${esc(m.q)} <span class="muted">→ ${esc(m.answer)}</span>
+          <span class="qtag">${m.correct ? `+${fmtXp(m.mbucks)}` : "0"} MBucks</span>
+        </span></div>`).join("")}
+      </div>
+      <div class="footer"><button class="btn" data-back>Back to contests</button></div>
+    </main>`);
+    on("[data-back]", "click", () => {
+      claimWalletCredits().finally(() => contestList(back));
     });
   }
 

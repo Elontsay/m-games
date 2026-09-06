@@ -45,11 +45,15 @@ CREATE TABLE IF NOT EXISTS arena_results (
 );
 
 -- ---- Player-created contests (Tier 1+ admins create, Tier 3 approves) --------
+-- `questions` is a JSON list of {q, a, mbucks}: the prompt, its accepted answer,
+-- and what solving that one pays. mbucks_reward is their sum, stored alongside
+-- so the catalog can show what a contest is worth without unpacking it.
 CREATE TABLE IF NOT EXISTS custom_contests (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     creator_user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title            TEXT NOT NULL,
     description      TEXT NOT NULL,
+    questions        TEXT NOT NULL DEFAULT '[]',
     mbucks_reward    INTEGER NOT NULL DEFAULT 0,
     status           TEXT NOT NULL DEFAULT 'pending',
     approved_by      INTEGER REFERENCES users(id),
@@ -140,6 +144,7 @@ CREATE TABLE IF NOT EXISTS hunt_accusations (
 _MIGRATIONS = [
     ("users", "tier", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "banned", "INTEGER NOT NULL DEFAULT 0"),
+    ("custom_contests", "questions", "TEXT NOT NULL DEFAULT '[]'"),
 ]
 
 
