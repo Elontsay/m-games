@@ -99,6 +99,25 @@ const TRIPLES = [[3, 4, 5], [5, 12, 13], [8, 15, 17], [7, 24, 25], [20, 21, 29],
 const piStr = (k) => (k === 1 ? "pi" : `${k}pi`);
 const piDisp = (k) => (k === 1 ? "π" : `${k}π`);
 
+// Accepted spellings of √n. A whole number when n is a perfect square, otherwise
+// both the raw form (sqrt48) and the simplified one (4sqrt3), with or without
+// parentheses and times signs, since all of those are the same answer.
+function sqrtAns(n) {
+  const root = Math.sqrt(n);
+  if (Number.isInteger(root)) return [String(root)];
+  const out = [`sqrt${n}`, `sqrt(${n})`];
+  let outside = 1, inside = n;
+  for (let d = 2; d * d <= inside; d++) {
+    while (inside % (d * d) === 0) { inside /= d * d; outside *= d; }
+  }
+  if (outside > 1) {
+    for (const core of [`${outside}sqrt`, `${outside}*sqrt`]) out.push(`${core}${inside}`, `${core}(${inside})`);
+  }
+  return out;
+}
+// How √n reads back in a prompt, e.g. "4sqrt3".
+const sqrtHint = (n) => sqrtAns(n)[sqrtAns(n).length - 1].replace("*", "").replace(/[()]/g, "");
+
 // ---- Bronze: arithmetic ------------------------------------------------------
 function addQ(d1, d2) { const a = nDigit(d1), b = nDigit(d2); return Q(`${a} + ${b} = ?`, a + b); }
 function subQ(d1, d2) { let a = nDigit(d1), b = nDigit(d2); if (b > a) [a, b] = [b, a]; return Q(`${a} − ${b} = ?`, a - b); }
@@ -366,20 +385,84 @@ const TOPICS = {
       () => { const inv = pick([["sin", "1/2", 30], ["sin", "√3/2", 60], ["cos", "1/2", 60], ["cos", "√3/2", 30], ["tan", "1", 45], ["tan", "√3", 60], ["sin", "√2/2", 45], ["cos", "√2/2", 45], ["tan", "√3/3", 30]]); return Q(`${inv[0]} θ = ${inv[1]} and 0° < θ < 90°. θ in degrees?`, inv[2]); },
     ],
   },
+  // XZ² = XY² + YZ² − 2·XY·YZ·cos(XYZ). The included angle is kept to 60°, 90°
+  // or 120° so that cos is ±1/2 or 0 and XZ² lands on a whole number -- the
+  // answer is then an integer or a clean surd. At 30° or 45° it would be a
+  // nested radical like √(200−100√3), which nobody can reasonably type.
   lawCos: {
     name: "Law of Cosines",
     levels: [
-      () => { const [a, b, c] = pick([[3, 8, 7], [5, 8, 7], [7, 15, 13], [8, 15, 13], [5, 21, 19], [16, 21, 19]]); return Q(`Two sides of a triangle are ${a} and ${b} with a 60° angle between them. Third side?`, c); },
-      () => { const [a, b, c] = pick([[3, 5, 7], [5, 16, 19], [7, 8, 13], [3, 5, 7], [11, 24, 31], [9, 15, 21]]); return Q(`Two sides of a triangle are ${a} and ${b} with a 120° angle between them. Third side?`, c); },
-      () => { const set = pick([[3, 8, 7, 60], [5, 8, 7, 60], [7, 15, 13, 60], [3, 5, 7, 120], [7, 8, 13, 120], [5, 16, 19, 120], [3, 4, 5, 90], [5, 12, 13, 90], [8, 15, 17, 90]]); return Q(`A triangle has sides ${set[0]}, ${set[1]}, and ${set[2]}. What is the angle (in degrees) opposite the side of length ${set[2]}?`, set[3]); },
+      // Sides chosen so XZ comes out whole.
+      () => {
+        const [a, b, ang, c] = pick([
+          [3, 8, 60, 7], [5, 8, 60, 7], [7, 15, 60, 13], [8, 15, 60, 13], [5, 21, 60, 19], [16, 21, 60, 19],
+          [3, 5, 120, 7], [7, 8, 120, 13], [5, 16, 120, 19], [11, 24, 120, 31], [9, 15, 120, 21],
+        ]);
+        return Q(`In triangle XYZ, side XY = ${a} and side YZ = ${b}, and angle XYZ = ${ang}°. How long is side XZ?`, c);
+      },
+      // Any small triangle: the answer is usually a surd.
+      () => {
+        const a = rnd(2, 9), b = rnd(2, 9), ang = pick([60, 90, 120]);
+        const sq = a * a + b * b - (ang === 60 ? a * b : ang === 120 ? -a * b : 0);
+        return Q(
+          `In triangle XYZ, side XY = ${a} and side YZ = ${b}, and angle XYZ = ${ang}°. How long is side XZ? (exact form, e.g. ${sqrtHint(21)})`,
+          sqrtAns(sq),
+        );
+      },
+      // All three sides given: work backwards to the angle.
+      () => {
+        const [a, b, c, ang] = pick([
+          [3, 8, 7, 60], [5, 8, 7, 60], [7, 15, 13, 60], [8, 15, 13, 60],
+          [3, 5, 7, 120], [7, 8, 13, 120], [5, 16, 19, 120],
+          [3, 4, 5, 90], [5, 12, 13, 90], [8, 15, 17, 90],
+        ]);
+        return Q(`In triangle XYZ, side XY = ${a}, side YZ = ${b}, and side XZ = ${c}. Find angle XYZ in degrees.`, ang);
+      },
     ],
   },
+  // YZ/sin X = XZ/sin Y = XY/sin Z. Angle pairs are picked so the ratio of sines
+  // is a whole number, √2 or √3, keeping answers exact. Every SSA setup here is
+  // one where the obtuse solution would overshoot 180°, so there is no ambiguous
+  // second triangle to argue about.
   lawSines: {
     name: "Law of Sines",
     levels: [
-      () => { const k = rnd(2, 15); return Math.random() < 0.5 ? Q(`In triangle ABC, angle A = 30°, angle B = 90°, and side a = ${k}. Find side b.`, 2 * k) : Q(`In triangle ABC, angle A = 90°, angle B = 30°, and side a = ${2 * k}. Find side b.`, k); },
-      () => { const k = rnd(2, 15); return Math.random() < 0.5 ? Q(`In triangle ABC, angle A = 30°, side a = ${k}, side b = ${2 * k}. Find angle B in degrees.`, 90) : Q(`In triangle ABC, angle A = 30°, side a = ${k}, side b = ${k}. Find angle B in degrees.`, 30); },
-      () => { const k = rnd(2, 15); return Math.random() < 0.5 ? Q(`In triangle ABC, angle A = 30°, angle B = 60°, side a = ${k}. Find side c.`, 2 * k) : Q(`In triangle ABC, angle A = 90°, angle B = 60°, side a = ${2 * k}. Find side c.`, k); },
+      // Two sides and the angle opposite one of them: find the other angle.
+      () => {
+        const k = rnd(2, 12);
+        const [angX, sideYZ, sideXZ, angY] = pick([
+          [30, k, 2 * k, 90], [30, k, k, 30], [90, 2 * k, k, 30], [45, k, k, 45],
+        ]);
+        return Q(
+          `In triangle XYZ, angle X = ${angX}°, side YZ = ${sideYZ} (opposite X), and side XZ = ${sideXZ} (opposite Y). Find angle Y in degrees.`,
+          angY,
+        );
+      },
+      // Two angles and the side opposite one: find the side opposite the other.
+      () => {
+        const a = rnd(2, 12);
+        const [angX, angY, mult] = pick([
+          [30, 90, 4], [30, 60, 3], [30, 45, 2], [45, 90, 2], [30, 120, 3],
+        ]);
+        // XZ = YZ·sin Y / sin X, and mult is (XZ/YZ)² so the answer stays exact.
+        return Q(
+          `In triangle XYZ, angle X = ${angX}° and angle Y = ${angY}°, and side YZ = ${a} (opposite X). How long is side XZ (opposite Y)? (exact form, e.g. ${sqrtHint(12)})`,
+          sqrtAns(mult * a * a),
+        );
+      },
+      // Two angles and a side: find the third side, which needs angle Z first.
+      () => {
+        const a = rnd(2, 12);
+        const [angX, angY, mult] = pick([
+          [30, 90, 3], [45, 90, 1], [30, 30, 3], [60, 60, 1], [30, 120, 1], [45, 45, 2],
+        ]);
+        const angZ = 180 - angX - angY;
+        // XY = YZ·sin Z / sin X, with mult = (XY/YZ)².
+        return Q(
+          `In triangle XYZ, angle X = ${angX}° and angle Y = ${angY}°, and side YZ = ${a} (opposite X). How long is side XY (opposite Z = ${angZ}°)? (exact form, e.g. ${sqrtHint(8)})`,
+          sqrtAns(mult * a * a),
+        );
+      },
     ],
   },
   sinusoid: {

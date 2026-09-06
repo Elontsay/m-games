@@ -1,6 +1,7 @@
 """Sign-in routes: Google OAuth (OpenID Connect), a dev-only login, logout, and /api/me."""
 import re
 
+from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.flask_client import OAuth
 from flask import Blueprint, abort, current_app, jsonify, redirect, request, session, url_for
 from markupsafe import escape
@@ -96,7 +97,16 @@ def login():
 
 @auth_bp.get("/auth/callback")
 def callback():
-    token = oauth.google.authorize_access_token()
+    try:
+        token = oauth.google.authorize_access_token()
+    except OAuthError as err:
+        # A sign-in that can't be completed is normal wear: a refreshed or
+        # bookmarked callback, a back button, a server restart mid-flow, or a
+        # state that has already been spent. Send them back to the front door
+        # to try again instead of showing a 500.
+        current_app.logger.info("Google sign-in did not complete: %s", err)
+        session.clear()
+        return redirect("/?signin=retry")
     info = token.get("userinfo") or oauth.google.userinfo()
     user = upsert_user(
         "google",

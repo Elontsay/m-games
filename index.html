@@ -40,7 +40,11 @@
 
     /* ---- welcome ---- */
     .video-area { flex: 1; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
-    .video-slot { width: 100%; max-width: 48rem; aspect-ratio: 16 / 9; border: 2px dashed #cbd5e1; border-radius: 0.5rem; }
+    .video-slot { width: 100%; max-width: 48rem; aspect-ratio: 16 / 9; border-radius: 0.5rem; }
+    /* A plain div is still a placeholder (the cutscene has no film yet); the
+       welcome screen's real <video> gets a solid frame instead of a dashed one. */
+    div.video-slot { border: 2px dashed #cbd5e1; }
+    video.video-slot { background: #0f172a; display: block; object-fit: contain; }
 
     /* ---- buttons ---- */
     .btn {

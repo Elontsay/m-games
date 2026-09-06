@@ -3,8 +3,8 @@
 Finn hands a Tier 2 ruler three intercepted letters and opens up the player
 directory -- profiles, friend lists, who viewed whom, and the activity log.
 Six accounts in there are the ring. Name all six and you make Tier 3; name an
-innocent and your accusations are wiped, so the clues have to be read rather
-than the directory brute-forced.
+innocent and you wait ten minutes before you can name anyone again, so reading
+the clues beats working down the directory by hand.
 
 The letters are stored as ciphertext exactly as a player sees them. Each one
 decodes cleanly with the key in its `hint` -- Letter #2's ciphertext is the
@@ -26,6 +26,9 @@ hunt_bp = Blueprint("hunt", __name__, url_prefix="/api/hunt")
 HUNT_TIER = 2       # who may open the Hunt
 REWARD_TIER = 3     # what solving it grants
 TARGET_COUNT = len(TRAITOR_USERNAMES)
+# A wrong name costs ten minutes. Names already given stay on the board -- the
+# cost is the wait, so guessing down the directory is slow rather than free.
+WRONG_COOLDOWN_SECONDS = 600
 
 LETTERS = [
     {
@@ -113,16 +116,30 @@ def _named(db, user_id: int) -> str:
     return _clean_name(row["name"]) if row else "Unknown"
 
 
+def _cooldown_left(db, user_id: int) -> int:
+    """Seconds until this hunter may accuse again, counted from their last wrong
+    name. 0 when they are free to go."""
+    row = db.execute(
+        "SELECT MAX(created_at) AS last FROM hunt_accusations WHERE user_id = ? AND correct = 0", (user_id,)
+    ).fetchone()
+    if not row or not row["last"]:
+        return 0
+    return max(0, int(row["last"] + WRONG_COOLDOWN_SECONDS - time.time()))
+
+
 def _progress(db, user) -> dict:
     correct = db.execute(
         "SELECT accused_id FROM hunt_accusations WHERE user_id = ? AND correct = 1", (user["id"],)
     ).fetchall()
     named = [{"userId": r["accused_id"], "name": _named(db, r["accused_id"])} for r in correct]
+    # Solved means this hunter named all six -- not merely that they outrank the
+    # reward. A Tier 3+ player (the owner included) can still work the case.
     return {
         "tier": tier_of(user),
         "needed": TARGET_COUNT,
         "named": named,
-        "solved": tier_of(user) >= REWARD_TIER and len(named) >= TARGET_COUNT,
+        "solved": len(named) >= TARGET_COUNT,
+        "cooldownSeconds": _cooldown_left(db, user["id"]),
     }
 
 
@@ -189,8 +206,11 @@ def dossiers():
 def accuse():
     user = require_tier(HUNT_TIER)
     db = get_db()
-    if tier_of(user) >= REWARD_TIER:
+    if _progress(db, user)["solved"]:
         abort(409, "You have already closed this case.")
+    waiting = _cooldown_left(db, user["id"])
+    if waiting:
+        abort(429, f"That last name is still being checked. {waiting} seconds left.")
 
     body = request.get_json(silent=True) or {}
     try:
@@ -210,23 +230,21 @@ def accuse():
 
     correct = accused_id in _traitor_ids(db)
     now = time.time()
-    # An accusation is a real report either way: Tier 3 sees it in the queue.
+    # An accusation is a real report either way: the queue sees it.
     db.execute(
         "INSERT INTO reports (reporter_user_id, reported_user_id, reason, status, created_at) "
         "VALUES (?, ?, ?, 'open', ?)",
         (user["id"], accused_id, "Named in Hunt for the Traitor", now),
     )
-    if not correct:
-        # Wrong name: the case file is thrown out and the hunt starts over.
-        db.execute("DELETE FROM hunt_accusations WHERE user_id = ?", (user["id"],))
-        db.commit()
-        return jsonify(correct=False, reset=True, **_progress(db, user))
-
+    # Both outcomes are recorded. Keeping the wrong ones is what makes the
+    # cooldown work, and what stops the same wrong name being spent twice.
     db.execute(
-        "INSERT INTO hunt_accusations (user_id, accused_id, correct, created_at) VALUES (?, ?, 1, ?)",
-        (user["id"], accused_id, now),
+        "INSERT INTO hunt_accusations (user_id, accused_id, correct, created_at) VALUES (?, ?, ?, ?)",
+        (user["id"], accused_id, int(correct), now),
     )
     db.commit()
+    if not correct:
+        return jsonify(correct=False, **_progress(db, user))
 
     found = db.execute(
         "SELECT COUNT(*) AS n FROM hunt_accusations WHERE user_id = ? AND correct = 1", (user["id"],)
@@ -236,4 +254,4 @@ def accuse():
         db.commit()
 
     user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
-    return jsonify(correct=True, reset=False, **_progress(db, user))
+    return jsonify(correct=True, **_progress(db, user))

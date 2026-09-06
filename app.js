@@ -404,10 +404,13 @@
   function welcome() {
     show(`<main class="screen">
       <h1 class="title">Welcome to the M Games</h1>
-      <!-- Intro video goes here later -->
       <div class="video-area">
-        <div class="video-slot" aria-label="Intro video placeholder"></div>
+        <video class="video-slot" controls preload="metadata" playsinline
+               src="assets/intro.mp4" aria-label="M Games intro"></video>
       </div>
+      ${!API.me && /[?&]signin=retry\b/.test(location.search)
+        ? `<div class="name-row"><span class="small muted">That sign-in didn't go through — it may have expired. Try again.</span></div>`
+        : ""}
       ${API.me
         ? `<div class="name-row"><span class="small muted">Signed in as <strong>${esc(API.me.name)}</strong>${API.me.email ? ` · ${esc(API.me.email)}` : ""} · <a class="link-btn" href="/logout">Sign out</a></span></div>`
         : `<form class="name-row" data-name-form>
@@ -2455,7 +2458,7 @@
         <div class="small muted">reported by ${esc(r.reporterName)} · ${esc(r.reason)}</div>
       </div>
       <span style="display:flex;gap:0.5rem">
-        <button class="btn sm" data-ban="${r.reportedUserId}">Ban</button>
+        ${tier >= 4 ? `<button class="btn sm" data-ban="${r.reportedUserId}">Ban</button>` : ""}
         <button class="btn sm secondary" data-dismiss="${r.id}">Dismiss</button>
       </span>
     </div>`;
@@ -2551,6 +2554,7 @@
   const fmtWhen = (ts) => (ts
     ? new Date(ts * 1000).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
     : "—");
+  const coolText = (sec) => (sec >= 60 ? `${Math.ceil(sec / 60)} min` : `${sec}s`);
 
   async function huntScreen(back, notice) {
     if (myTier() < 2) return back();
@@ -2600,9 +2604,12 @@
           : hunt.briefing)}
         ${notice ? `<p class="notice-light">${esc(notice)}</p>` : ""}
         <h2>🔎 Named ${hunt.named.length} of ${hunt.needed}</h2>
+        ${hunt.cooldownSeconds > 0
+          ? `<p class="notice-light">⏳ Finn is still checking your last name — ${coolText(hunt.cooldownSeconds)} before you can name anyone else.</p>`
+          : ""}
         ${hunt.named.length
           ? `<p class="small muted">So far: ${hunt.named.map((n) => esc(n.name)).join(", ")}</p>`
-          : `<p class="small muted">Name an innocent player and the case file is thrown out — every name you've given me goes with it.</p>`}
+          : `<p class="small muted">Name an innocent player and I won't take another name from you for ten minutes.</p>`}
 
         <h3 style="margin-top:1.5rem">The intercepted letters</h3>
         ${hunt.letters.map(letter).join("")}
@@ -2646,29 +2653,35 @@
       </div>
       <div class="footer between">
         <button class="btn secondary" data-back>Back to the directory</button>
-        ${hunt.solved || named
-          ? `<button class="btn" disabled>${named ? "Already named" : "Case closed"}</button>`
+        ${hunt.solved || named || hunt.cooldownSeconds > 0
+          ? `<button class="btn" disabled>${named ? "Already named" : hunt.solved ? "Case closed" : `Wait ${coolText(hunt.cooldownSeconds)}`}</button>`
           : `<button class="btn" data-accuse>Name as traitor</button>`}
       </div>
     </main>`);
     on("[data-back]", "click", () => huntScreen(back));
     on("[data-accuse]", "click", async () => {
-      if (!(await askConfirm(`Name ${p.name} as one of the six? If they are innocent, every name you have given Finn is thrown out.`))) return;
+      if (!(await askConfirm(`Name ${p.name} as one of the six? If they are innocent, Finn won't take another name for ten minutes.`))) return;
       let res = null;
+      let failed = "";
       try {
         res = await apiJson("/api/hunt/accuse", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ userId: p.id }),
         });
-      } catch {}
-      if (!res) return huntScreen(back, "That accusation never reached Finn. Try again.");
+      } catch (err) {
+        // A refusal and a dead connection are different problems; say which.
+        failed = String(err.message) === "409" ? "Finn has already closed this case."
+          : String(err.message) === "429" ? "Finn is still checking your last name. Give it a few minutes."
+          : "That accusation never reached Finn. Try again.";
+      }
+      if (!res) return huntScreen(back, failed);
       if (res.solved) {
         if (API.me) API.me.tier = res.tier;
         return huntScreen(back, `That is all six. You are a Tier ${res.tier} ruler now.`);
       }
       if (res.correct) return huntScreen(back, `${p.name} was one of them. ${res.named.length} of ${res.needed} named.`);
-      return huntScreen(back, `${p.name} was innocent. The case file is back to nothing — start again.`);
+      return huntScreen(back, `${p.name} was innocent. Finn won't take another name for ten minutes.`);
     });
   }
 

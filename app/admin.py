@@ -1,9 +1,9 @@
 """Arena governance: player-created contests, reports, and bans.
 
 Tier 1+ can propose a contest; Tier 3 approves it (which is what makes its MBucks
-reward real) or rejects it. Tier 2+ can report a player; Tier 3 can act on a
-report by banning. Tier 4 -- the owner's own Google account, see auth.py -- is
-the only one who can hand out Tier 3.
+reward real) or rejects it. Tier 2+ can report a player, and Tier 3 reviews and
+dismisses those reports. Banning is Tier 4 only -- the owner's own Google
+account, see auth.py -- as is handing out Tier 3.
 """
 import time
 
@@ -213,14 +213,16 @@ def dismiss_report(report_id: int):
 
 @admin_bp.post("/users/<int:user_id>/ban")
 def ban_user(user_id: int):
-    actor = require_tier(3)
+    # Banning is the owner's alone. Tier 3 reviews the queue and dismisses
+    # reports, but taking an account away is not a power it hands out.
+    actor = require_tier(4)
     if user_id == actor["id"]:
         abort(400, "You cannot ban yourself.")
     target = get_user(user_id)
     if target is None:
         abort(404)
-    if tier_of(target) >= 3:
-        abort(403, "Cannot ban a Tier 3+ admin.")
+    if tier_of(target) >= 4:
+        abort(403, "Cannot ban an owner account.")
     db = get_db()
     db.execute("UPDATE users SET banned = 1 WHERE id = ?", (user_id,))
     db.execute(
@@ -233,7 +235,7 @@ def ban_user(user_id: int):
 
 @admin_bp.post("/users/<int:user_id>/unban")
 def unban_user(user_id: int):
-    require_tier(3)
+    require_tier(4)
     db = get_db()
     if get_user(user_id) is None:
         abort(404)

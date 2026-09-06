@@ -124,8 +124,8 @@ CREATE TABLE IF NOT EXISTS qualifier_entries (
     taken_at REAL NOT NULL
 );
 
--- Accusations made during the Hunt. Naming an innocent wipes the hunter's set,
--- so the six have to be identified from the clues rather than brute-forced.
+-- Accusations made during the Hunt, right and wrong alike. The wrong ones stay
+-- because they are what the ten-minute cooldown is measured from.
 CREATE TABLE IF NOT EXISTS hunt_accusations (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
