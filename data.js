@@ -482,6 +482,489 @@ TOPICS.systems.levels[0] = () => {
   return Q(`y = ${lin(a, b)};  ${axby(c, d)} = ${c * x + d * y}. Solve for (x, y).`, pairAns(x, y));
 };
 
+// ---- prerequisites ---------------------------------------------------------------------------
+// What a subject leans on. Used by the Player Handbook to draw the subject map:
+// every entry points backwards, to subjects on the same tier or an earlier one,
+// so the map lays out in tier order with no edge ever pointing up the ladder.
+const PREREQS = {
+  // Bronze
+  addition: [],
+  subtraction: ["addition"],
+  multiplication: ["addition"],
+  division: ["multiplication", "subtraction"],
+  // Silver
+  fractions: ["division"],
+  orderOps: ["multiplication", "subtraction"],
+  exponents: ["multiplication"],
+  linear: ["subtraction", "division"],
+  // Gold
+  areaPerimeter: ["multiplication", "orderOps"],
+  distance: ["subtraction", "exponents"],
+  circles: ["exponents", "fractions"],
+  pythagorean: ["exponents", "distance"],
+  // Crystal
+  sectors: ["circles", "fractions"],
+  functions: ["linear", "orderOps"],
+  graphing: ["linear", "fractions"],
+  factoring: ["linear", "exponents"],
+  // Emerald
+  multiplyPoly: ["factoring"],
+  systems: ["linear", "graphing"],
+  quadratics: ["factoring"],
+  complexIntro: ["exponents", "pythagorean"],
+  // Amethyst
+  addComplex: ["complexIntro"],
+  mulComplex: ["complexIntro", "multiplyPoly"],
+  conjugates: ["mulComplex"],
+  divComplex: ["conjugates", "fractions"],
+  // Ruby
+  graphQuad: ["quadratics", "graphing"],
+  stats1: ["functions", "graphQuad"],
+  stats2: ["stats1", "exponents", "functions", "graphQuad"],
+  stats3: ["stats1", "fractions", "functions", "graphQuad"],
+  // Obsidian
+  trig: ["pythagorean", "fractions", "circles", "functions", "graphQuad"],
+  lawCos: ["trig", "pythagorean"],
+  lawSines: ["trig"],
+  sinusoid: ["trig", "graphing"],
+};
+
+// ---- lessons ---------------------------------------------------------------------------------
+// One per topic, taught before the stadium opens. `idea` is the one-line point,
+// `rules` are what you actually do, `examples` are worked end to end, and `watch`
+// is the mistake this topic reliably produces. Keyed by TOPICS id.
+const LESSONS = {
+  addition: {
+    idea: "Adding multi-digit numbers is column work: line the place values up and carry when a column passes 9.",
+    rules: [
+      "Write the numbers so ones sit over ones and tens over tens.",
+      "Add one column at a time, right to left.",
+      "If a column comes to 10 or more, write its ones digit and carry the ten into the next column.",
+    ],
+    examples: [
+      { q: "47 + 68", steps: ["Ones: 7 + 8 = 15. Write 5, carry 1.", "Tens: 4 + 6 = 10, plus the carried 1 makes 11."], a: "115" },
+      { q: "286 + 457", steps: ["Ones: 6 + 7 = 13. Write 3, carry 1.", "Tens: 8 + 5 + 1 = 14. Write 4, carry 1.", "Hundreds: 2 + 4 + 1 = 7."], a: "743" },
+    ],
+    watch: "Forgetting the carry is the usual slip: 47 + 68 is 115, not 105.",
+  },
+  subtraction: {
+    idea: "Subtraction is column work too, but where addition carries, subtraction borrows.",
+    rules: [
+      "Line up the place values and work right to left.",
+      "If the top digit is smaller than the bottom one, borrow 10 from the column to its left.",
+      "Borrowing drops the column you took from by 1.",
+    ],
+    examples: [
+      { q: "62 − 38", steps: ["Ones: 2 − 8 won't go, so borrow: 12 − 8 = 4.", "Tens: the 6 became 5, so 5 − 3 = 2."], a: "24" },
+      { q: "803 − 47", steps: ["The tens are 0, so borrow from the hundreds first: 7 hundreds, 10 tens, 3 ones.", "Now move a ten across: 9 tens, 13 ones. 13 − 7 = 6.", "Tens: 9 − 4 = 5. Hundreds: 7."], a: "756" },
+    ],
+    watch: "Borrowing across a zero catches most people: the zero becomes 9, not 10.",
+  },
+  multiplication: {
+    idea: "Multiplying multi-digit numbers means multiplying by each digit separately and adding the pieces.",
+    rules: [
+      "Multiply the top number by the ones digit of the bottom, then by its tens digit.",
+      "The tens row shifts one place left, because you are really multiplying by tens.",
+      "Add the rows.",
+    ],
+    examples: [
+      { q: "34 × 26", steps: ["34 × 6 = 204.", "34 × 20 = 680.", "204 + 680 = 884."], a: "884" },
+      { q: "57 × 8", steps: ["7 × 8 = 56. Write 6, carry 5.", "5 × 8 = 40, plus the carried 5 is 45."], a: "456" },
+    ],
+    watch: "Skipping the shift on the second row is the classic error: it is 34 × 20, not 34 × 2.",
+  },
+  division: {
+    idea: "Long division asks how many times the divisor fits, one place value at a time.",
+    rules: [
+      "Work left to right through the digits of the number being divided.",
+      "At each step: how many times does it fit? Write that digit, multiply back, subtract, bring down the next digit.",
+      "Whatever is left at the end is the remainder.",
+    ],
+    examples: [
+      { q: "476 ÷ 7", steps: ["7 into 4 is 0, so take 47. It fits 6 times (42), leaving 5.", "Bring down the 6 to make 56. 7 fits 8 times exactly."], a: "68" },
+      { q: "912 ÷ 4", steps: ["4 into 9 is 2 (8), leaving 1.", "Bring down 1 to make 11. 4 fits 2 times (8), leaving 3.", "Bring down 2 to make 32. 4 fits 8 times."], a: "228" },
+    ],
+    watch: "Line each new answer digit up over the digit you just brought down, or the place values drift.",
+  },
+
+  fractions: {
+    idea: "Fractions only add when they share a denominator, but they multiply straight across.",
+    rules: [
+      "Same denominator: add the numerators and keep the denominator.",
+      "Different denominators: rewrite over a common one first. (a/b) ± (c/d) = (ad ± bc)/bd always works.",
+      "Multiply across the top and across the bottom. To divide, flip the second fraction and multiply.",
+      "Reduce at the end by dividing top and bottom by their common factor.",
+    ],
+    examples: [
+      { q: "2/5 + 3/7", steps: ["Common denominator 35.", "2/5 = 14/35 and 3/7 = 15/35.", "14 + 15 = 29."], a: "29/35" },
+      { q: "3/4 ÷ 2/9", steps: ["Flip the second and multiply: 3/4 × 9/2.", "3 × 9 = 27 over 4 × 2 = 8.", "27 and 8 share no factor."], a: "27/8" },
+    ],
+    watch: "Never add the denominators. 1/2 + 1/3 is 5/6, not 2/5.",
+  },
+  orderOps: {
+    idea: "An expression is evaluated in a fixed order, not left to right.",
+    rules: [
+      "Brackets, then exponents, then multiplication and division, then addition and subtraction.",
+      "Multiplication does not beat division, and addition does not beat subtraction: equal rank means left to right.",
+      "A bracket has to be fully finished before anything outside it happens.",
+    ],
+    examples: [
+      { q: "6 + 4 × (9 − 5)²", steps: ["Brackets: 9 − 5 = 4.", "Exponent: 4² = 16.", "Multiply: 4 × 16 = 64.", "Add: 6 + 64."], a: "70" },
+      { q: "(7 × 6 − 12) ÷ 5", steps: ["Inside the bracket, multiply first: 7 × 6 = 42.", "Then subtract: 42 − 12 = 30.", "Finally divide: 30 ÷ 5."], a: "6" },
+    ],
+    watch: "6 + 4 × 4 is 22, not 40. The multiplication happens before the addition.",
+  },
+  exponents: {
+    idea: "An exponent counts how many copies of the base get multiplied; a root runs that backwards.",
+    rules: [
+      "a^b means b copies of a multiplied together, so 3^4 = 3 × 3 × 3 × 3 = 81.",
+      "√n asks what squares to n. ∛n asks what cubes to n.",
+      "To solve a^x = n, write n as a power of a and read off the exponent.",
+    ],
+    examples: [
+      { q: "2^5", steps: ["2 × 2 = 4, × 2 = 8, × 2 = 16, × 2 = 32."], a: "32" },
+      { q: "Solve 3^x = 243", steps: ["Powers of 3: 3, 9, 27, 81, 243.", "243 is the fifth one."], a: "5" },
+    ],
+    watch: "3^4 is 81, not 12. Exponents are repeated multiplication, not multiplication.",
+  },
+  linear: {
+    idea: "Solving for x means undoing what was done to it, keeping the two sides equal at every step.",
+    rules: [
+      "Whatever you do, do it to both sides.",
+      "Collect every x on one side and every plain number on the other.",
+      "Undo in reverse order: additions and subtractions first, then the coefficient.",
+    ],
+    examples: [
+      { q: "Solve 5x + 7 = 32", steps: ["Subtract 7 from both sides: 5x = 25.", "Divide both sides by 5."], a: "x = 5" },
+      { q: "Solve 4(x − 3) = 6x + 2", steps: ["Expand: 4x − 12 = 6x + 2.", "Subtract 4x: −12 = 2x + 2.", "Subtract 2: −14 = 2x."], a: "x = −7" },
+    ],
+    watch: "Whatever you do to one side goes to the whole other side, not just one term of it.",
+  },
+
+  areaPerimeter: {
+    idea: "Perimeter is the distance around a shape; area is the space inside it.",
+    rules: [
+      "Rectangle: perimeter 2(w + h), area w × h. Square of side s: perimeter 4s, area s².",
+      "Triangle: area = ½ × base × height.",
+      "Parallelogram: base × height. Trapezoid: ½(b₁ + b₂) × height.",
+      "The height is always perpendicular to the base, never the slanted side.",
+    ],
+    examples: [
+      { q: "Area of a triangle with base 14 and height 9", steps: ["½ × 14 = 7.", "7 × 9 = 63."], a: "63" },
+      { q: "Area of a trapezoid with bases 6 and 10 and height 7", steps: ["Average the bases: (6 + 10)/2 = 8.", "8 × 7 = 56."], a: "56" },
+    ],
+    watch: "Perimeter and area are different questions. Read which one is being asked.",
+  },
+  distance: {
+    idea: "The distance between two points is the hypotenuse of the right triangle they make.",
+    rules: [
+      "Same y: the distance is just the difference in x. Same x: the difference in y.",
+      "Otherwise distance = √((x₂ − x₁)² + (y₂ − y₁)²).",
+      "The differences get squared, so their signs never matter.",
+    ],
+    examples: [
+      { q: "Distance between (2, 3) and (7, 15)", steps: ["Across: 7 − 2 = 5. Up: 15 − 3 = 12.", "5² + 12² = 25 + 144 = 169.", "√169 = 13."], a: "13" },
+      { q: "Distance between (−4, 6) and (−4, −1)", steps: ["The x values match, so it is a straight vertical drop.", "6 − (−1) = 7."], a: "7" },
+    ],
+    watch: "Look for 3-4-5, 5-12-13 and 8-15-17. Most of these are built from those triples.",
+  },
+  circles: {
+    idea: "Everything about a circle follows from its radius.",
+    rules: [
+      "Diameter = 2r. Circumference = 2πr. Area = πr².",
+      "An answer in terms of π keeps the symbol: write 18pi, not 56.5.",
+      "Backwards: area 49π means r² = 49, so r = 7.",
+    ],
+    examples: [
+      { q: "Circumference of a circle with radius 9", steps: ["2 × 9 = 18.", "So the circumference is 18π."], a: "18pi" },
+      { q: "A circle has area 36π. What is its radius?", steps: ["πr² = 36π, so r² = 36."], a: "6" },
+    ],
+    watch: "Circumference doubles the radius, area squares it. 2πr and πr² are easy to swap by accident.",
+  },
+  pythagorean: {
+    idea: "In a right triangle the two legs and the hypotenuse are tied together by a² + b² = c².",
+    rules: [
+      "c is always the hypotenuse: opposite the right angle, and the longest side.",
+      "Missing hypotenuse: add the squares of the legs, then take the root.",
+      "Missing leg: subtract, don't add. a² = c² − b².",
+      "Common triples: 3-4-5, 5-12-13, 8-15-17, 7-24-25, and every multiple of them.",
+    ],
+    examples: [
+      { q: "A right triangle has legs 9 and 12. Hypotenuse?", steps: ["81 + 144 = 225.", "√225 = 15. (It is 3-4-5 tripled.)"], a: "15" },
+      { q: "Hypotenuse 26, one leg 10. Other leg?", steps: ["26² = 676 and 10² = 100.", "676 − 100 = 576.", "√576 = 24."], a: "24" },
+    ],
+    watch: "Adding where you should subtract is the whole trap. Work out which side is the hypotenuse first.",
+  },
+
+  sectors: {
+    idea: "A sector is a slice of a circle, and it keeps exactly its share of the whole.",
+    rules: [
+      "A θ° sector is θ/360 of the circle.",
+      "Sector area = (θ/360) × πr². Arc length = (θ/360) × 2πr.",
+      "Backwards: divide the sector's area by the whole circle's area to get θ/360.",
+    ],
+    examples: [
+      { q: "Area of a 90° sector of a circle with radius 6", steps: ["90/360 = 1/4.", "Whole circle: π × 36 = 36π.", "A quarter of that."], a: "9pi" },
+      { q: "Arc length of a 120° sector with radius 9", steps: ["120/360 = 1/3.", "Circumference: 2π × 9 = 18π.", "A third of that."], a: "6pi" },
+    ],
+    watch: "Area uses r², arc length uses r. The θ/360 fraction is the same for both.",
+  },
+  functions: {
+    idea: "f(x) is a rule. f(3) means run that rule with 3 in place of every x.",
+    rules: [
+      "Substitute the number for x everywhere, then evaluate in the usual order.",
+      "Negative inputs need brackets: if f(x) = x², then f(−4) = (−4)² = 16.",
+      "f(g(x)) means do g first, then feed its answer into f.",
+    ],
+    examples: [
+      { q: "f(x) = 2x² − 3x + 1. Find f(−2).", steps: ["(−2)² = 4, so 2 × 4 = 8.", "−3 × (−2) = +6.", "8 + 6 + 1 = 15."], a: "15" },
+      { q: "f(x) = 3x + 1, g(x) = x² + 2. Find f(g(2)).", steps: ["Inside first: g(2) = 4 + 2 = 6.", "Then f(6) = 18 + 1."], a: "19" },
+    ],
+    watch: "f(g(x)) and g(f(x)) are different numbers. Work from the inside out.",
+  },
+  graphing: {
+    idea: "A straight line is pinned down by its slope and where it crosses the y-axis.",
+    rules: [
+      "Slope m = (y₂ − y₁)/(x₂ − x₁), rise over run.",
+      "Slope-intercept form is y = mx + b, where b is the y-intercept.",
+      "x-intercept: set y = 0 and solve. y-intercept: set x = 0 and solve.",
+    ],
+    examples: [
+      { q: "Slope of the line through (−2, 5) and (4, −7)", steps: ["Rise: −7 − 5 = −12.", "Run: 4 − (−2) = 6.", "−12/6 = −2."], a: "−2" },
+      { q: "Where does 3x + 4y = 12 cross the x-axis?", steps: ["Crossing the x-axis means y = 0.", "3x = 12."], a: "x = 4" },
+    ],
+    watch: "Subtract the coordinates in the same order on the top and the bottom, or the sign flips.",
+  },
+  factoring: {
+    idea: "Factoring runs multiplication backwards: turn a quadratic into two brackets.",
+    rules: [
+      "For x² + bx + c, find two numbers that multiply to c and add to b.",
+      "Those two numbers go straight into (x + p)(x + q).",
+      "If c is positive the two share a sign, and b says which. If c is negative they differ.",
+      "With a leading coefficient, look for the split of the middle term that lets you group.",
+    ],
+    examples: [
+      { q: "Factor x² + 7x + 12", steps: ["Multiply to 12, add to 7: 3 and 4."], a: "(x+3)(x+4)" },
+      { q: "Factor x² − 2x − 15", steps: ["Multiply to −15, add to −2: 3 and −5."], a: "(x+3)(x−5)" },
+    ],
+    watch: "Check by expanding. The middle term is where a wrong sign shows up.",
+  },
+
+  multiplyPoly: {
+    idea: "Multiplying brackets means every term in the first meets every term in the second.",
+    rules: [
+      "(a + b)(c + d) = ac + ad + bc + bd, then collect like terms.",
+      "(x + p)(x + q) = x² + (p + q)x + pq.",
+      "(ax + b)² = a²x² + 2abx + b²: square each end and double the cross term.",
+    ],
+    examples: [
+      { q: "Expand (x − 4)(x + 9)", steps: ["x × x = x².", "x × 9 and −4 × x give 9x − 4x = 5x.", "−4 × 9 = −36."], a: "x^2+5x-36" },
+      { q: "Expand (3x + 5)²", steps: ["(3x)² = 9x².", "2 × 3x × 5 = 30x.", "5² = 25."], a: "9x^2+30x+25" },
+    ],
+    watch: "(x + 5)² is not x² + 25. The middle term 10x is real.",
+  },
+  systems: {
+    idea: "Two equations and two unknowns: use one of them to knock a variable out of the other.",
+    rules: [
+      "Substitution: if one equation already gives y, put that expression into the other.",
+      "Elimination: scale the equations so one variable cancels when you add or subtract them.",
+      "Once you have one variable, put it back to get the other. Answer as (x, y).",
+    ],
+    examples: [
+      { q: "y = 2x − 1 and 3x + 2y = 12", steps: ["Substitute: 3x + 2(2x − 1) = 12.", "7x − 2 = 12, so x = 2.", "y = 2(2) − 1 = 3."], a: "(2, 3)" },
+      { q: "2x + 3y = 12 and 4x − 3y = 6", steps: ["The 3y terms cancel when you add: 6x = 18.", "x = 3, so 6 + 3y = 12."], a: "(3, 2)" },
+    ],
+    watch: "Answer both variables. Half a solution scores nothing.",
+  },
+  quadratics: {
+    idea: "A quadratic is zero exactly when one of its factors is zero.",
+    rules: [
+      "x² = n has two roots, +√n and −√n.",
+      "Factor first: (x − p)(x − q) = 0 gives x = p and x = q.",
+      "x² − (p + q)x + pq = 0 has roots p and q, readable straight off the factors.",
+      "With a leading coefficient a root can be a fraction: ax + b = 0 gives x = −b/a.",
+    ],
+    examples: [
+      { q: "Solve x² − 7x + 10 = 0", steps: ["Multiply to 10, add to −7: −2 and −5.", "(x − 2)(x − 5) = 0."], a: "2, 5" },
+      { q: "Solve 3x² + 5x − 2 = 0", steps: ["Factors: (3x − 1)(x + 2).", "3x − 1 = 0 gives x = 1/3.", "x + 2 = 0 gives x = −2."], a: "1/3, −2" },
+    ],
+    watch: "Two brackets mean two answers. Give both unless the question asks for one.",
+  },
+  complexIntro: {
+    idea: "i is defined by i² = −1, which is what gives negative numbers square roots.",
+    rules: [
+      "√(−n) = i√n, so √(−25) = 5i.",
+      "Powers of i cycle every four: i, −1, −i, 1. Divide the exponent by 4 and use the remainder.",
+      "|a + bi| = √(a² + b²), the same distance formula, measured from the origin.",
+    ],
+    examples: [
+      { q: "Simplify √(−49)", steps: ["√49 = 7.", "The minus under the root becomes i."], a: "7i" },
+      { q: "Simplify i^27", steps: ["27 ÷ 4 leaves remainder 3.", "i³ = −i."], a: "−i" },
+    ],
+    watch: "i⁴ = 1, so only the remainder matters. i^100 is just 1.",
+  },
+
+  addComplex: {
+    idea: "Complex numbers add in two separate columns: reals with reals, imaginaries with imaginaries.",
+    rules: [
+      "(a + bi) + (c + di) = (a + c) + (b + d)i.",
+      "Subtracting flips the sign of both parts of the second number.",
+      "Leave the answer in a + bi form.",
+    ],
+    examples: [
+      { q: "(3 + 5i) + (8 + 2i)", steps: ["Reals: 3 + 8 = 11.", "Imaginaries: 5 + 2 = 7."], a: "11+7i" },
+      { q: "(4 − 6i) − (9 + 2i)", steps: ["Reals: 4 − 9 = −5.", "Imaginaries: −6 − 2 = −8."], a: "−5−8i" },
+    ],
+    watch: "A minus in front of a bracket hits both parts of it, not just the first.",
+  },
+  mulComplex: {
+    idea: "Multiply complex numbers like brackets, then use i² = −1 to fold the last term into the real part.",
+    rules: [
+      "(a + bi)(c + di) = ac + adi + bci + bdi², and bdi² is just −bd.",
+      "So the real part is ac − bd and the imaginary part is ad + bc.",
+      "(a + bi)² = (a² − b²) + 2abi.",
+    ],
+    examples: [
+      { q: "(2 + 3i)(4 − 5i)", steps: ["Real: 2×4 − 3×(−5) = 8 + 15 = 23.", "Imaginary: 2×(−5) + 3×4 = −10 + 12 = 2."], a: "23+2i" },
+      { q: "(3 − 4i)²", steps: ["a = 3, b = −4.", "Real: 9 − 16 = −7.", "Imaginary: 2 × 3 × (−4) = −24."], a: "−7−24i" },
+    ],
+    watch: "i² = −1 is what turns the last term real. Dropping it is the usual slip.",
+  },
+  conjugates: {
+    idea: "The conjugate of a + bi is a − bi, and multiplying the two clears i away entirely.",
+    rules: [
+      "Only the sign of the imaginary part changes.",
+      "(a + bi)(a − bi) = a² + b², always a positive real number.",
+      "The conjugate of a product is the product of the conjugates.",
+    ],
+    examples: [
+      { q: "Conjugate of −6 + 7i", steps: ["The real part stays −6.", "The imaginary sign flips."], a: "−6−7i" },
+      { q: "(5 + 2i)(5 − 2i)", steps: ["a² + b² = 25 + 4."], a: "29" },
+    ],
+    watch: "It is a² + b², not a² − b². The minus in the bracket and the minus from i² cancel.",
+  },
+  divComplex: {
+    idea: "You cannot leave i on the bottom, so multiply top and bottom by the denominator's conjugate.",
+    rules: [
+      "Dividing by a plain number: divide both parts by it.",
+      "Dividing by c + di: multiply top and bottom by c − di.",
+      "The new denominator is c² + d², a real number, and the rest is just splitting the fraction.",
+    ],
+    examples: [
+      { q: "(12 − 18i) ÷ 6", steps: ["12 ÷ 6 = 2.", "−18 ÷ 6 = −3."], a: "2−3i" },
+      { q: "(1 + 7i) ÷ (3 + i)", steps: ["Multiply top and bottom by 3 − i.", "Bottom: 3² + 1² = 10.", "Top: (1 + 7i)(3 − i) = 3 − i + 21i + 7 = 10 + 20i.", "Divide by 10."], a: "1+2i" },
+    ],
+    watch: "Top and bottom get the same conjugate, or you have changed the number.",
+  },
+
+  graphQuad: {
+    idea: "A parabola is described by its vertex and by where it crosses the x-axis.",
+    rules: [
+      "y = a(x − h)² + k has vertex (h, k). Note the sign flip on h.",
+      "From y = ax² + bx + c the vertex sits at x = −b/(2a); put that back in for y.",
+      "x-intercepts come from factoring: y = (x − p)(x − q) crosses at p and q.",
+    ],
+    examples: [
+      { q: "Vertex of y = (x − 3)² + 5", steps: ["The bracket reads x − 3, so h = 3.", "k is the 5 outside."], a: "(3, 5)" },
+      { q: "x-intercepts of y = x² − x − 12", steps: ["Multiply to −12, add to −1: 3 and −4.", "(x + 3)(x − 4) = 0."], a: "−3, 4" },
+    ],
+    watch: "(x + 4)² has its vertex at x = −4, not 4.",
+  },
+  stats1: {
+    idea: "Mean, median and mode are three different answers to “what is typical here?”",
+    rules: [
+      "Mean: add everything, divide by how many there are.",
+      "Median: sort the list first, then take the middle value (average the middle two if the count is even).",
+      "Mode: whichever value appears most often.",
+    ],
+    examples: [
+      { q: "Mean of 12, 19, 7, 22", steps: ["Sum: 60.", "60 ÷ 4 = 15."], a: "15" },
+      { q: "Median of 9, 3, 14, 7, 5", steps: ["Sorted: 3, 5, 7, 9, 14.", "The middle of five is the third."], a: "7" },
+    ],
+    watch: "The median needs the list sorted. The middle of the unsorted list is not the median.",
+  },
+  stats2: {
+    idea: "Range, variance and standard deviation measure spread rather than centre.",
+    rules: [
+      "Range = largest − smallest.",
+      "Population variance: find the mean, square each value's distance from it, then average those squares.",
+      "Population standard deviation is the square root of the variance.",
+    ],
+    examples: [
+      { q: "Range of 14, 3, 27, 8", steps: ["Largest 27, smallest 3."], a: "24" },
+      { q: "Population variance of 4, 4, 10, 10", steps: ["Mean is 7.", "Every value is 3 away, so every squared distance is 9.", "The average of four 9s is 9."], a: "9" },
+    ],
+    watch: "Divide by n for the population version. The sample version divides by n − 1.",
+  },
+  stats3: {
+    idea: "Counting problems all turn on one question: does the order matter?",
+    rules: [
+      "Probability = favourable outcomes ÷ total outcomes.",
+      "Combinations, where order does not matter: C(n, k) = n! ÷ (k!(n − k)!).",
+      "Permutations, where order does matter: P(n, k) = n × (n − 1) × … , k factors in all.",
+    ],
+    examples: [
+      { q: "A bag has 4 red and 6 blue marbles. P(red)?", steps: ["4 red out of 10 marbles.", "4/10 reduces."], a: "2/5" },
+      { q: "How many ways to choose 3 items from 7?", steps: ["(7 × 6 × 5) ÷ (3 × 2 × 1).", "210 ÷ 6."], a: "35" },
+    ],
+    watch: "Picking a committee is a combination. Picking 1st, 2nd and 3rd place is a permutation.",
+  },
+
+  trig: {
+    idea: "In a right triangle, sine, cosine and tangent are just ratios of two sides.",
+    rules: [
+      "SOH-CAH-TOA: sin = opposite/hypotenuse, cos = adjacent/hypotenuse, tan = opposite/adjacent.",
+      "Learn the exact values: sin30 = 1/2, sin45 = √2/2, sin60 = √3/2. Cosine is the same list backwards.",
+      "tan30 = √3/3, tan45 = 1, tan60 = √3.",
+      "A question that gives you the ratio and asks for θ is the same table read the other way.",
+    ],
+    examples: [
+      { q: "Opposite 8, adjacent 15, hypotenuse 17. cos θ = ?", steps: ["Cosine is adjacent over hypotenuse."], a: "15/17" },
+      { q: "tan θ = √3 and 0° < θ < 90°. Find θ.", steps: ["From the table, tan 60° = √3."], a: "60" },
+    ],
+    watch: "Which side counts as “adjacent” depends on which angle you are standing at. The hypotenuse is never the adjacent side.",
+  },
+  lawCos: {
+    idea: "The Law of Cosines is Pythagoras with a correction term for angles that are not 90°.",
+    rules: [
+      "c² = a² + b² − 2ab·cos C, where C is the angle between sides a and b.",
+      "cos 60° = 1/2, so the term becomes −ab. cos 120° = −1/2, so it becomes +ab. cos 90° = 0 and you are back to Pythagoras.",
+      "Given all three sides, rearrange: cos C = (a² + b² − c²)/(2ab).",
+    ],
+    examples: [
+      { q: "XY = 3, YZ = 8, angle XYZ = 60°. Find XZ.", steps: ["XZ² = 9 + 64 − 2(3)(8)(1/2).", "= 73 − 24 = 49."], a: "7" },
+      { q: "Sides 3 and 5 around an unknown angle, with 7 opposite it.", steps: ["cos C = (9 + 25 − 49)/(2 × 3 × 5) = −15/30 = −1/2.", "That is 120°."], a: "120" },
+    ],
+    watch: "The angle in the formula must be the one between the two sides you squared.",
+  },
+  lawSines: {
+    idea: "In any triangle, each side is proportional to the sine of the angle opposite it.",
+    rules: [
+      "a/sin A = b/sin B = c/sin C.",
+      "Pair each side with the angle across from it, never one touching it.",
+      "The three angles add to 180°, which is how you get the third one.",
+    ],
+    examples: [
+      { q: "Angle X = 30°, side opposite X is 5, side opposite Y is 10. Find angle Y.", steps: ["5/sin30 = 10/sin Y.", "sin30 = 1/2, so the left side is 10.", "sin Y = 1."], a: "90" },
+      { q: "Angle X = 30°, angle Y = 45°, side opposite X is 6. Find the side opposite Y.", steps: ["6/sin30 = b/sin45.", "6 ÷ (1/2) = 12.", "b = 12 × (√2/2)."], a: "6√2" },
+    ],
+    watch: "Match sides to opposite angles. Pairing a side with an angle touching it gives nonsense.",
+  },
+  sinusoid: {
+    idea: "y = A·sin(Bx) + C is a wave: A sets its height, B its speed, C the level it sits on.",
+    rules: [
+      "Amplitude is |A|, the distance from the middle to a peak. A negative A flips the wave but not its amplitude.",
+      "Period is 2π/B, how far along x before the wave repeats.",
+      "The wave runs from C − |A| at the bottom to C + |A| at the top.",
+    ],
+    examples: [
+      { q: "Amplitude of y = −4sin(3x) + 2", steps: ["A is −4.", "Amplitude is its size, |−4|."], a: "4" },
+      { q: "Maximum of y = 5cos(x) − 3", steps: ["The middle sits at −3.", "The wave rises 5 above that."], a: "2" },
+    ],
+    watch: "Amplitude is never negative, and the period depends only on B.",
+  },
+};
+
 // ---- tiers -------------------------------------------------------------------------------------
 // Points per question by stadium position (1st..4th) and level (1..3), times the tier multiplier.
 const POINTS = [[10, 20, 30], [10, 20, 30], [20, 30, 40], [30, 40, 50]];
@@ -529,6 +1012,8 @@ for (const def of TIER_DEFS) {
       return {
         id: key,
         name: t.name,
+        lesson: LESSONS[key],
+        prereqs: PREREQS[key] || [],
         levels: t.levels.map((make, li) => {
           const bonus = (t.bonus && t.bonus[li]) || { label: `hard ${t.name}`, xp: 50 * def.mult, make: t.levels[2] };
           return level(li + 1, 10, POINTS[i][li] * def.mult, make, bonus);

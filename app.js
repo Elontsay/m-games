@@ -43,6 +43,7 @@
       const me = await apiJson("/api/me");
       API.available = true;
       API.google = !!me.google;
+      API.aiReview = !!me.aiReview;   // false when the server has no Anthropic key
       if (!me.signedIn) return;
       API.me = me;
       const saved = await apiJson("/api/progress");
@@ -244,6 +245,8 @@
     tierIndex: 0,
     xp: 0,
     results: {},                 // contestId -> { earned, total, marks, wrong, bonus }
+    lessons: {},                 // "Tier:stadiumId" -> true once its lesson has been read
+    guides: {},                  // "subjectId:L1" -> true once that handbook guide is finished
     introDone: false,
     coronationLastAttempt: null, // timestamp (ms) of the last Coronation entry
     diamond: { active: false, round: 0, opponent: null },
@@ -400,6 +403,391 @@
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
   }
 
+  // ---- 0. Project M: the front door ----------------------------------------
+  // Everything under the Project M umbrella lives here. The M Games is the first
+  // entry and the only one with anything behind it so far; the handbook is a
+  // placeholder waiting to be written.
+  const PROJECT_M = [
+    {
+      id: "games",
+      icon: "🎮",
+      name: "The M Games",
+      blurb: "The tiered maths contest, Bronze through Diamond. Beat Finn Reaper, take the crown, and run the place.",
+      action: "Play",
+      open: () => welcome(),
+    },
+    {
+      id: "handbook",
+      icon: "📕",
+      name: "M Games Player Handbook",
+      blurb: "A map of every subject in the games, and a written guide to all 96 levels — what each one leads to, and what you need before you can read it.",
+      action: "Open",
+      open: () => handbook(),
+    },
+  ];
+
+  function projectM() {
+    show(`<main class="screen">
+      <h1 class="title">Project M</h1>
+      <p class="hub-sub">Pick where you're going.</p>
+      <div class="hub">
+        ${PROJECT_M.map((entry) => `<div class="hub-card${entry.empty ? " empty" : ""}">
+          <div class="hub-icon" aria-hidden="true">${entry.icon}</div>
+          <div class="hub-body">
+            <h2>${esc(entry.name)}</h2>
+            <p class="small muted">${esc(entry.blurb)}</p>
+          </div>
+          <button class="btn" data-open="${entry.id}">${esc(entry.action)}</button>
+        </div>`).join("")}
+      </div>
+      <div class="footer between">
+        ${API.me
+          ? `<span class="small muted">Signed in as <strong>${esc(API.me.name)}</strong> · <a class="link-btn" href="/logout">Sign out</a></span>`
+          : API.available ? `<a class="btn secondary" href="/login">${API.google ? "Sign in with Google" : "Sign in"}</a>` : "<span></span>"}
+      </div>
+    </main>`);
+    on("[data-open]", "click", (e) => {
+      const entry = PROJECT_M.find((x) => x.id === e.currentTarget.dataset.open);
+      if (entry) entry.open();
+    });
+  }
+
+  // ---- the Player Handbook: a map of every subject --------------------------
+  // One box per subject, laid out a tier to a row. Solid lines run from a subject
+  // to the ones that lean on it; inside each box sit its three levels, numbered
+  // in order but readable in any order. Every level has a written guide behind
+  // it, in guides.js.
+  const HB_STATUS = {
+    locked: "prerequisites not met",
+    open: "ready to read",
+    done: "complete",
+  };
+  const HB = {
+    boxW: 160, boxH: 104,     // one subject
+    colGap: 44, rowGap: 80,
+    gutter: 100,              // room on the left for the tier name
+    top: 34, pad: 24,
+  };
+  const hbX = (col) => HB.gutter + col * (HB.boxW + HB.colGap);
+  const hbY = (row) => HB.top + row * (HB.boxH + HB.rowGap);
+
+  // Subject names run to three words; wrap them rather than letting them spill.
+  function wrapLabel(text, perLine = 18, maxLines = 3) {
+    const lines = [];
+    let line = "";
+    for (const word of String(text).split(" ")) {
+      const next = line ? `${line} ${word}` : word;
+      if (next.length > perLine && line) { lines.push(line); line = word; } else { line = next; }
+      if (lines.length === maxLines) break;
+    }
+    if (line && lines.length < maxLines) lines.push(line);
+    return lines;
+  }
+
+  // ---- guide progress -------------------------------------------------------
+  // A handbook level is a 2-4 page guide to read, not a contest to win, so it is
+  // tracked apart from the game's own results: finishing a guide is reading, not
+  // scoring, and promotion never wipes it.
+  const guideKey = (subjectId, n) => `${subjectId}:L${n}`;
+  const guideDone = (subjectId, n) => !!(state.guides || {})[guideKey(subjectId, n)];
+  function setGuideDone(subjectId, n, done) {
+    if (!state.guides) state.guides = {};
+    if (done) state.guides[guideKey(subjectId, n)] = true;
+    else delete state.guides[guideKey(subjectId, n)];
+    saveState();
+  }
+  // Any level at all: this is what turns a subject's outgoing lines green.
+  const guideStarted = (subject) =>
+    !!subject && Array.from({ length: subject.levels }, (_, i) => i + 1).some((n) => guideDone(subject.id, n));
+
+  // Prerequisites are matched level for level: level 2 of a subject needs level 2
+  // of everything it comes after, not merely level 1. Finishing Linear Equations
+  // level 1 opens Factoring level 1 and nothing beyond it.
+  //
+  // A subject's own levels are not a chain: each guide stands on its own, so
+  // level 2 can be read without level 1. The only thing gating a level is the
+  // same level of the subjects it comes after.
+  function hbBlockers(subject, n, at) {
+    return subject.prereqs
+      .filter((id) => at[id] && !guideDone(id, n))
+      .map((id) => `${at[id].name} level ${n}`);
+  }
+
+  // done (green) · open (yellow) · locked (red)
+  function hbLevelStatus(subject, n, at) {
+    if (guideDone(subject.id, n)) return "done";
+    return hbBlockers(subject, n, at).length ? "locked" : "open";
+  }
+
+  // Every subject with the tier it sits on and where its box goes.  // Every subject with the tier it sits on and where its box goes.
+  function handbookSubjects() {
+    const out = [];
+    CHAIN.forEach((tierName) => {
+      const t = GAME_DATA.tiers[tierName];
+      if (!t || t.tournament || !t.stadiums.length) return;
+      const row = out.length ? out[out.length - 1].row + 1 : 0;
+      t.stadiums.forEach((s, col) => {
+        out.push({ id: s.id, name: s.name, tier: tierName, theme: t.theme, levels: s.levels.length,
+                   prereqs: s.prereqs || [], row, col });
+      });
+    });
+    return out;
+  }
+
+  function handbookMap() {
+    const subjects = handbookSubjects();
+    const at = Object.fromEntries(subjects.map((s) => [s.id, s]));
+    const rows = subjects.length ? subjects[subjects.length - 1].row + 1 : 0;
+    const cols = Math.max(...subjects.map((s) => s.col)) + 1;
+    const width = HB.gutter + cols * HB.boxW + (cols - 1) * HB.colGap + HB.pad;
+    const height = hbY(rows - 1) + HB.boxH + HB.pad + 10;
+
+    // Prerequisite lines. A link down the tiers drops out of the bottom of one
+    // box into the top of the next; a link across a tier loops under the row,
+    // so it never runs through the boxes sitting between them.
+    const edges = subjects.flatMap((s) => s.prereqs.map((id) => {
+      const from = at[id];
+      if (!from) return "";
+      // Every line leaving a subject goes green as soon as any one of its levels
+      // is finished, so you can see at a glance what you have opened up.
+      const cls = `hb-edge${guideStarted(from) ? " done" : ""}`;
+      const fx = hbX(from.col) + HB.boxW / 2;
+      const tx = hbX(s.col) + HB.boxW / 2;
+      if (from.row === s.row) {
+        const y = hbY(s.row) + HB.boxH;
+        return `<path class="${cls}" d="M ${fx} ${y} C ${fx} ${y + 44}, ${tx} ${y + 44}, ${tx} ${y}"/>`;
+      }
+      const fy = hbY(from.row) + HB.boxH;
+      const ty = hbY(s.row);
+      const bend = Math.min(46, (ty - fy) / 2);
+      return `<path class="${cls}" d="M ${fx} ${fy} C ${fx} ${fy + bend}, ${tx} ${ty - bend}, ${tx} ${ty}"/>`;
+    })).join("");
+
+    const tierLabels = subjects.filter((s) => s.col === 0).map((s) => `
+      <text class="hb-tier" x="${HB.gutter - 20}" y="${hbY(s.row) + HB.boxH / 2}"
+            fill="${s.theme[2]}">${esc(s.tier)}</text>`).join("");
+
+    const boxes = subjects.map((s) => {
+      const x = hbX(s.col);
+      const y = hbY(s.row);
+      const lines = wrapLabel(s.name);
+      // The three levels, chained left to right along the bottom of the box.
+      const chipW = 22, chipH = 16, chipGap = 14;
+      const chainW = s.levels * chipW + (s.levels - 1) * chipGap;
+      const cx0 = x + (HB.boxW - chainW) / 2;
+      const cy = y + HB.boxH - 30;
+      const chain = Array.from({ length: s.levels }, (_, i) => {
+        const cx = cx0 + i * (chipW + chipGap);
+        const status = hbLevelStatus(s, i + 1, at);
+        const link = i === 0 ? "" :
+          `<line class="hb-level-link" x1="${cx - chipGap}" y1="${cy + chipH / 2}" x2="${cx}" y2="${cy + chipH / 2}"/>`;
+        return `${link}<rect class="hb-level ${status}" x="${cx}" y="${cy}" width="${chipW}" height="${chipH}" rx="3">
+            <title>Level ${i + 1}: ${HB_STATUS[status]}</title>
+          </rect>
+          <text class="hb-level-n ${status}" x="${cx + chipW / 2}" y="${cy + chipH / 2 + 4}">${i + 1}</text>`;
+      }).join("");
+      return `<g class="hb-node" data-subject="${esc(s.id)}" tabindex="0" role="button"
+                 aria-label="${esc(s.name)}, ${esc(s.tier)} tier. ${Array.from({ length: s.levels }, (_, i) =>
+                   `Level ${i + 1} ${HB_STATUS[hbLevelStatus(s, i + 1, at)]}`).join(", ")}.">
+        <rect class="hb-box" x="${x}" y="${y}" width="${HB.boxW}" height="${HB.boxH}" rx="10"
+              style="--tier:${s.theme[2]}"/>
+        ${lines.map((line, i) => `<text class="hb-name" x="${x + HB.boxW / 2}" y="${y + 26 + i * 15}">${esc(line)}</text>`).join("")}
+        ${chain}
+      </g>`;
+    }).join("");
+
+    return `<svg class="hb-map" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}"
+                 role="img" aria-label="Map of every M Games subject and what it depends on">
+      <g class="hb-edges">${edges}</g>${tierLabels}${boxes}
+    </svg>`;
+  }
+
+  function handbook() {
+    show(`<main class="screen">${bar("Player handbook")}
+      <div class="content wide">
+        <h2>📕 M Games Player Handbook</h2>
+        <p class="small muted">Every subject in the M Games, a tier to a row. Each numbered square is a
+          level — a 2–4 page guide to read. Prerequisites match level for level: finishing level 1 of a
+          subject opens level 1 of everything it leads to and nothing further, and level 2 of a subject
+          needs level 2 of everything it comes after. A subject's own levels are independent, so level 2
+          can be read without level 1.</p>
+        <div class="hb-legend">
+          <span><svg width="34" height="10" aria-hidden="true"><path class="hb-edge" d="M 1 9 C 12 9, 22 1, 33 1"/></svg> leads to</span>
+          <span><svg width="34" height="10" aria-hidden="true"><path class="hb-edge done" d="M 1 9 C 12 9, 22 1, 33 1"/></svg> opened up</span>
+          <span><svg width="46" height="16" aria-hidden="true"><rect class="hb-level" x="1" y="0" width="18" height="15" rx="3"/><line class="hb-level-link" x1="19" y1="8" x2="27" y2="8"/><rect class="hb-level" x="27" y="0" width="18" height="15" rx="3"/></svg> level 1 → 2 → 3</span>
+          <span><span class="hb-swatch locked"></span> prerequisites not met</span>
+          <span><span class="hb-swatch open"></span> ready to read</span>
+          <span><span class="hb-swatch done"></span> complete</span>
+        </div>
+        <div class="hb-scroll">${handbookMap()}</div>
+      </div>
+      <div class="footer"><button class="btn secondary" data-back>Back to Project M</button></div>
+    </main>`);
+    on("[data-back]", "click", projectM);
+    on("[data-subject]", "click", (e) => handbookSubject(e.currentTarget.dataset.subject));
+    on("[data-subject]", "keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handbookSubject(e.currentTarget.dataset.subject); }
+    });
+  }
+
+  // The stadium that teaches this subject, if the player is standing on its tier.
+  // Handbook and game are two views of the same 32 subjects, so each should be
+  // able to reach the other; you can only walk into a stadium on your own planet.
+  function stadiumFor(subject) {
+    if (!state.introDone || !subject || subject.tier !== tierName()) return null;
+    const t = tier();
+    return (t && t.stadiums.find((x) => x.id === subject.id)) || null;
+  }
+
+  // One subject's page: what it comes after, what it leads to, and its levels.
+  // `back` is where the Back button goes -- the map by default, but the lesson
+  // or the stadium when the player arrived from inside the game.
+  function handbookSubject(id, back) {
+    const subjects = handbookSubjects();
+    const s = subjects.find((x) => x.id === id);
+    if (!s) return handbook();
+    const at = Object.fromEntries(subjects.map((x) => [x.id, x]));
+    const comesAfter = s.prereqs.map((p) => at[p]).filter(Boolean);
+    const leadsTo = subjects.filter((x) => x.prereqs.includes(id));
+
+    // How far through a related subject you are, level by level -- which is what
+    // decides whether this subject's matching level is open.
+    const levelDots = (x) => Array.from({ length: x.levels }, (_, i) =>
+      `<span class="hb-dot ${guideDone(x.id, i + 1) ? "done" : ""}" title="Level ${i + 1}${
+        guideDone(x.id, i + 1) ? " finished" : " not finished"}">${i + 1}</span>`).join("");
+
+    const list = (items) => (items.length
+      ? `<ul class="hb-list">${items.map((x) => `<li>
+          <button class="link-btn" data-goto="${esc(x.id)}">${esc(x.name)}</button>
+          <span class="small muted">· ${esc(x.tier)}</span>
+          <span class="hb-dots">${levelDots(x)}</span>
+        </li>`).join("")}</ul>`
+      : `<p class="small muted">Nothing — this is a starting point.</p>`);
+
+    show(`<main class="screen">${bar("Player handbook")}
+      <div class="content">
+        <h2>${esc(s.name)}</h2>
+        <p class="small muted">${esc(s.tier)} tier · ${s.levels} levels</p>
+        <div class="hb-block"><h3>Comes after</h3>${list(comesAfter)}</div>
+        <div class="hb-block"><h3>Leads to</h3>${list(leadsTo)}</div>
+        <div class="hb-block"><h3>Levels</h3>
+          <ul class="hb-levels">${Array.from({ length: s.levels }, (_, i) => {
+            const n = i + 1;
+            const status = hbLevelStatus(s, n, at);
+            const blockers = hbBlockers(s, n, at);
+            return `<li class="hb-level-row">
+              <span class="hb-swatch ${status}"></span>
+              <span class="hb-level-body">
+                <strong>Level ${n}</strong>
+                <span class="small muted">— ${esc(HB_STATUS[status])}${
+                  blockers.length ? `. Needs ${esc(blockers.join(", "))}.` : ""}</span>
+              </span>
+              <button class="btn sm ${status === "locked" ? "secondary" : ""}" data-guide="${n}"
+                ${status === "locked" ? "disabled" : ""}>${
+                  !guideFor(s.id, n) ? "Not written" : status === "done" ? "Reread" : "Read guide"}</button>
+            </li>`;
+          }).join("")}</ul>
+        </div>
+      </div>
+      <div class="footer between">
+        <button class="btn secondary" data-back>${back ? "Back" : "Back to the map"}</button>
+        ${stadiumFor(s) ? `<button class="btn" data-play>🎮 Play the ${esc(s.name)} stadium</button>`
+          : `<span class="small muted">Played in the ${esc(s.tier)} tier.</span>`}
+      </div>
+    </main>`);
+    on("[data-back]", "click", () => (back ? back() : handbook()));
+    on("[data-goto]", "click", (e) => handbookSubject(e.currentTarget.dataset.goto, back));
+    on("[data-guide]", "click", (e) => handbookGuide(id, Number(e.currentTarget.dataset.guide), back));
+    on("[data-play]", "click", () => { const st = stadiumFor(s); if (st) stadium(st); });
+  }
+
+  // The written guide for one level, when there is one. Subjects still waiting to
+  // be written fall back to a placeholder, so the map works either way.
+  const guideFor = (subjectId, n) => (typeof GUIDES === "object" && GUIDES[subjectId] || [])[n - 1] || null;
+
+  function guideBody(s, n) {
+    const g = guideFor(s.id, n);
+    if (!g) {
+      return `<div class="hb-guide">
+        <p>This guide hasn't been written yet.</p>
+        <p class="small muted">Two to four pages on ${esc(s.name.toLowerCase())} at level ${n}.</p>
+      </div>`;
+    }
+    const example = (eg) => (eg ? `<div class="guide-eg">
+      <p class="eg-q">${esc(eg.q)}</p>
+      <ol>${eg.steps.map((step) => `<li>${esc(step)}</li>`).join("")}</ol>
+      <p class="eg-a">Answer: ${esc(eg.a)}</p>
+    </div>` : "");
+
+    return `<h3 class="guide-title">${esc(g.title)}</h3>
+      <p class="guide-intro">${esc(g.intro)}</p>
+      ${g.sections.map((sec) => `<section class="guide-section">
+        <h3>${esc(sec.heading)}</h3>
+        ${sec.paras.map((para) => `<p>${esc(para)}</p>`).join("")}
+        ${example(sec.example)}
+      </section>`).join("")}
+      ${g.mistakes && g.mistakes.length ? `<div class="guide-box warn">
+        <h3>Where it goes wrong</h3>
+        <ul>${g.mistakes.map((m) => `<li>${esc(m)}</li>`).join("")}</ul>
+      </div>` : ""}
+      ${g.recap && g.recap.length ? `<div class="guide-box recap">
+        <h3>In short</h3>
+        <ul>${g.recap.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
+      </div>` : ""}
+      ${g.practice && g.practice.length ? `<div class="guide-box guide-practice">
+        <h3>Try these</h3>
+        <ol>${g.practice.map((p) => `<li>${esc(p.q)} —
+          <details><summary>show answer</summary><span class="ans">${esc(p.a)}</span></details>
+        </li>`).join("")}</ol>
+      </div>` : ""}`;
+  }
+
+  // One level: the guide itself. There is nothing written in it yet, but marking
+  // it finished is what opens the matching level of everything downstream, so
+  // the button is real even while the pages are blank.
+  function handbookGuide(id, n, back) {
+    const subjects = handbookSubjects();
+    const s = subjects.find((x) => x.id === id);
+    if (!s) return handbook();
+    const at = Object.fromEntries(subjects.map((x) => [x.id, x]));
+    const status = hbLevelStatus(s, n, at);
+    const blockers = hbBlockers(s, n, at);
+    const opens = subjects.filter((x) => x.prereqs.includes(id));
+
+    show(`<main class="screen">${bar(`${s.name} · Level ${n}`)}
+      <div class="content">
+        <h2>${esc(s.name)} — Level ${n}</h2>
+        <p class="small muted">${esc(s.tier)} tier · guide ${n} of ${s.levels} · ${esc(HB_STATUS[status])}</p>
+        ${status === "locked"
+          ? `<p class="notice-light">Read ${esc(blockers.length > 1
+              ? `${blockers.slice(0, -1).join(", ")} and ${blockers[blockers.length - 1]}`
+              : blockers[0])} first.</p>`
+          : ""}
+        ${guideBody(s, n)}
+        ${opens.length ? `<p class="small muted">Finishing this opens level ${n} of ${
+          esc(opens.map((x) => x.name).join(", "))}.</p>` : ""}
+      </div>
+      <div class="footer between">
+        <button class="btn secondary" data-back>Back to ${esc(s.name)}</button>
+        ${stadiumFor(s) ? `<button class="btn secondary" data-play>🎮 Play the stadium</button>` : ""}
+        ${status === "locked" ? ""
+          : status === "done"
+            ? `<button class="btn secondary" data-unmark>Mark as unfinished</button>`
+            : `<button class="btn" data-mark>I've finished this guide</button>`}
+      </div>
+    </main>`);
+    on("[data-back]", "click", () => handbookSubject(id, back));
+    on("[data-play]", "click", () => { const st = stadiumFor(s); if (st) stadium(st); });
+    on("[data-mark]", "click", () => { setGuideDone(id, n, true); handbookSubject(id, back); });
+    on("[data-unmark]", "click", async () => {
+      // Un-finishing can strand levels downstream, so make it a deliberate act.
+      if (await askConfirm("Mark this guide unfinished? Anything it opened up will lock again.")) {
+        setGuideDone(id, n, false);
+        handbookSubject(id, back);
+      }
+    });
+  }
+
   // ---- 1. welcome + intro video --------------------------------------------
   function welcome() {
     show(`<main class="screen">
@@ -419,10 +807,12 @@
         ${API.available ? `<a class="btn secondary sign-in" href="/login">${API.google ? "Sign in with Google" : "Sign in"}</a><span class="small muted">or continue as a guest with the name above</span>` : ""}
       </form>`}
       <div class="footer between">
+        <button class="btn secondary" data-project>← Project M</button>
         <button class="btn link" data-reset>Reset progress</button>
         <button class="btn" data-next>Next</button>
       </div>
     </main>`);
+    on("[data-project]", "click", projectM);
     const goNext = () => {
       const input = app.querySelector("#player-name");
       if (input) state.playerName = input.value.trim() || "Player";
@@ -552,7 +942,7 @@
     show(`<main class="screen space">
       <div class="topbar">
         <div class="brand">M Games</div>
-        <div class="topbar-right">${adminButton()}${councilButton()}${huntButton()}${travelButton()}<button class="btn sm secondary" data-mmc title="M Math Competition">📋 MMC</button><button class="btn sm secondary" data-games title="Other games">🎮 Games</button>${achButton()}${profileCard()}</div>
+        <div class="topbar-right">${adminButton()}${councilButton()}${huntButton()}${travelButton()}<button class="btn sm secondary" data-mmc title="M Math Competition">📋 MMC</button><button class="btn sm secondary" data-contests title="Contests written by other players">📝 Contests</button><button class="btn sm secondary" data-forum title="Discuss problems with other players">💬 Forum</button><button class="btn sm secondary" data-games title="Other games">🎮 Games</button>${achButton()}${profileCard()}</div>
       </div>
       <div class="planet-area">
         <div class="planet" ${themeStyle(t)}>
@@ -573,7 +963,12 @@
       </div>
     </main>`);
 
-    on("[data-stadium]", "click", (e) => stadium(t.stadiums.find((s) => s.id === e.currentTarget.dataset.stadium)));
+    on("[data-stadium]", "click", (e) => {
+      const s = t.stadiums.find((x) => x.id === e.currentTarget.dataset.stadium);
+      // First time in this stadium, the lesson comes first; after that, straight in.
+      if (s.lesson && !lessonSeen(s)) return lessonScreen(s, () => stadium(s));
+      stadium(s);
+    });
     on("[data-coronation]", "click", playCoronation);
     on("[data-home]", "click", welcome);
     on("[data-reset]", "click", confirmReset);
@@ -582,17 +977,63 @@
     on("[data-council]", "click", () => councilScreen(planet));
     on("[data-hunt]", "click", () => huntScreen(planet));
     on("[data-games]", "click", () => games(planet));
+    on("[data-contests]", "click", () => contestList(planet));
+    on("[data-forum]", "click", () => forumScreen(planet));
     on("[data-travel]", "click", () => travel(planet));
     on("[data-profile]", "click", () => profileScreen(planet));
     on("[data-mmc]", "click", () => mmcHall(planet));
   }
 
-  // ---- 7. a stadium: pick a level ----------------------------------------------
+  // ---- 7a. the lesson: taught before the stadium opens --------------------------
+  // Every stadium has one, written in data.js next to the question generators.
+  // The first visit to a stadium goes through it; after that the stadium screen
+  // keeps a button to read it again, since nobody wants the same lesson twice.
+  const lessonSeen = (s) => !!(state.lessons || {})[`${tierName()}:${s.id}`];
+  function markLessonSeen(s) {
+    if (!state.lessons) state.lessons = {};
+    state.lessons[`${tierName()}:${s.id}`] = true;
+    saveState();
+  }
+
+  function lessonScreen(s, onDone) {
+    const l = s.lesson;
+    if (!l) return onDone();
+    show(`<main class="screen">${bar(`${s.name} lesson`)}
+      <div class="content">
+        ${finn(`Before you go in: here's how ${s.name.toLowerCase()} works. Read it once and the contests get a lot easier.`)}
+        <h2>📖 ${esc(s.name)}</h2>
+        <p class="lesson-idea">${esc(l.idea)}</p>
+        <div class="lesson-block">
+          <h3>How to do it</h3>
+          <ul class="lesson-rules">${l.rules.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
+        </div>
+        ${l.examples.map((ex, i) => `<div class="lesson-block worked">
+          <h3>Worked example${l.examples.length > 1 ? ` ${i + 1}` : ""}</h3>
+          <p class="qtext">${esc(ex.q)}</p>
+          <ol class="lesson-steps">${ex.steps.map((st) => `<li>${esc(st)}</li>`).join("")}</ol>
+          <p class="lesson-answer">Answer: <strong>${esc(ex.a)}</strong></p>
+        </div>`).join("")}
+        ${l.watch ? `<div class="lesson-watch"><strong>Watch out.</strong> ${esc(l.watch)}</div>` : ""}
+      </div>
+      <div class="footer between">
+        <button class="btn secondary" data-back>Back to Planet ${esc(tier().planet)}</button>
+        ${guideFor(s.id, 1) ? `<button class="btn secondary" data-guide>📕 Full guide</button>` : ""}
+        <button class="btn" data-go>Into the stadium</button>
+      </div>
+    </main>`);
+    on("[data-go]", "click", () => { markLessonSeen(s); onDone(); });
+    on("[data-back]", "click", () => { markLessonSeen(s); planet(); });
+    // The lesson is the short version; the handbook holds the long one. Coming
+    // back from it returns here rather than dumping the player in the handbook.
+    on("[data-guide]", "click", () => handbookSubject(s.id, () => lessonScreen(s, onDone)));
+  }
+
+  // ---- 7b. a stadium: pick a level ----------------------------------------------
   function stadium(s) {
     show(`<main class="screen">${bar(s.name)}
       <div class="content">
         <h2>${esc(s.name)} stadium</h2>
-        <p class="muted small">Three contests, 10 questions each. Green checks earn full points, yellow checks earn half. One attempt per contest.</p>
+        <p class="muted small">Three contests, 10 questions each. Green checks earn full points, yellow checks earn half. One attempt per contest.${s.lesson ? " The lesson is always there to re-read." : ""}</p>
         <div class="levels">${s.levels.map((l) => {
           const r = state.results[levelId(s, l)];
           return `<div class="level">
@@ -608,8 +1049,12 @@
       </div>
       <div class="footer between">
         <button class="btn secondary" data-back>Back to Planet ${esc(tier().planet)}</button>
+        ${s.lesson ? `<button class="btn secondary" data-lesson>📖 Read the lesson</button>` : ""}
+        ${guideFor(s.id, 1) ? `<button class="btn secondary" data-guide>📕 Full guide</button>` : ""}
       </div>
     </main>`);
+    on("[data-lesson]", "click", () => lessonScreen(s, () => stadium(s)));
+    on("[data-guide]", "click", () => handbookSubject(s.id, () => stadium(s)));
     on("[data-level]", "click", (e) => playLevel(s, s.levels.find((l) => l.level === Number(e.currentTarget.dataset.level))));
     on("[data-skip-level]", "click", (e) => {
       if (!isAdmin()) return;
@@ -900,7 +1345,7 @@
             <div class="game-icon">📝</div>
             <div>
               <h3>Player contests</h3>
-              <p class="small muted">Contests written by other rulers and approved by a Tier 3. Each question pays its own MBucks, and you get one sitting at each.</p>
+              <p class="small muted">Contests written by other players and approved by a Tier 3. Each question pays its own MBucks, and you get one sitting at each. Also on the 📝 Contests button up top.</p>
             </div>
             <button class="btn" data-contests>Browse</button>
           </div>
@@ -1846,6 +2291,7 @@
       }
       q.attempts += 1;
       const correct = isCorrect(q, input.value);
+      if (!correct) q.given = input.value;   // kept for AI review
       if (correct) q.status = q.attempts === 1 ? "green" : "yellow";
       else q.status = q.attempts === 1 ? "red" : "purple";
       if (correct) streakHit(); else streakBreak();
@@ -1957,6 +2403,65 @@
     on("[data-skip]", "click", () => settle(false));
   }
 
+  // ---- AI review -----------------------------------------------------------
+  // A wrong question and only the right answer next to it teaches nothing, so
+  // any question you missed can be handed to Finn for a worked explanation.
+  // The server does the asking (and the rate limiting); it also decides whether
+  // the feature exists at all, via API.aiReview.
+  const canExplain = () => !!API.aiReview;
+
+  function explainRow(i) {
+    return `<div class="explain-row">
+      <button class="btn sm secondary" data-explain="${i}">✨ Explain it</button>
+      <div class="explain" data-explain-box="${i}" hidden></div>
+    </div>`;
+  }
+
+  // `items` maps a row index to what the server needs: { question, answer, given, topic }.
+  function wireExplain(items) {
+    on("[data-explain]", "click", async (e) => {
+      const button = e.currentTarget;
+      const i = button.dataset.explain;
+      const box = app.querySelector(`[data-explain-box="${i}"]`);
+      const item = items[i];
+      if (!item) return;
+      if (box.dataset.filled) {                     // already fetched: just fold it away
+        box.hidden = !box.hidden;
+        button.textContent = box.hidden ? "✨ Explain it" : "Hide the explanation";
+        return;
+      }
+      if (!API.me) {
+        box.hidden = false;
+        box.innerHTML = `<p class="small muted">AI review needs an account, so your daily allowance can be counted. <a class="link-btn" href="/login">Sign in</a> and take another look.</p>`;
+        return;
+      }
+      button.disabled = true;
+      box.hidden = false;
+      box.innerHTML = `<p class="small muted">Finn is working it out…</p>`;
+      let result = null;
+      let why = "";
+      try {
+        result = await apiJson("/api/review", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(item),
+        });
+      } catch (ex) {
+        why = String(ex.message) === "429" ? "That's your AI reviews used up for today. They come back 24 hours after each one."
+          : String(ex.message) === "503" ? "AI review isn't switched on for this server."
+          : "Finn couldn't get to that one. Try again in a moment.";
+      }
+      button.disabled = false;
+      if (!result) {
+        box.innerHTML = `<p class="small muted">${esc(why)}</p>`;
+        return;
+      }
+      box.dataset.filled = "1";
+      box.innerHTML = `<p class="explain-text">${esc(result.explanation)}</p>`;
+      button.textContent = "Hide the explanation";
+    });
+  }
+
   // ---- results ---------------------------------------------------------------
   function results(opts, qs, result) {
     const pct = Math.round((result.earned / result.total) * 100);
@@ -1983,13 +2488,21 @@
         <h2>${esc(opts.name)}</h2>
         <div class="score">${fmtXp(result.earned)} / ${fmtXp(result.total)} <span class="muted" style="font-size:1rem;font-weight:500">points · ${pct}%${opts.isCoronation ? ` · ${result.wrong} wrong` : ""}</span></div>
         ${opts.awardsXp ? `<p><strong>+${fmtXp(result.earned)} XP</strong>${result.bonus && result.bonus.correct ? ` <strong>+${fmtXp(result.bonus.xp)} bonus XP</strong>` : ""} awarded. Total: ${fmtXp(state.xp)} XP.</p>` : ""}
-        ${qs.map((q, i) => `<div class="result-row">${markEl(q.status)}<span>${i + 1}. ${esc(q.q)} <span class="muted">→ ${esc(q.a[0])}</span>${q.tag ? `<span class="qtag">${esc(q.tag)}</span>` : ""}</span></div>`).join("")}
+        ${qs.map((q, i) => {
+          // "Wrong" here means it took more than one try, or never landed at all.
+          const missed = q.status === "yellow" || q.status === "purple";
+          return `<div class="result-row">${markEl(q.status)}<span>${i + 1}. ${esc(q.q)} <span class="muted">→ ${esc(q.a[0])}</span>${q.tag ? `<span class="qtag">${esc(q.tag)}</span>` : ""}</span></div>${
+            missed && canExplain() ? explainRow(i) : ""}`;
+        }).join("")}
         ${result.bonus ? `<div class="result-row">${markEl(result.bonus.correct ? "green" : "purple")}<span>Bonus: ${esc(result.bonus.q)} · ${result.bonus.correct ? `+${fmtXp(result.bonus.xp)} XP` : "no bonus"}</span></div>` : ""}
         ${legend()}
       </div>
       <div class="footer"><button class="btn" data-next>${opts.guided ? "Learn the System" : passed ? "Get promoted" : opts.isCoronation ? "Back to the planet" : "Back to the stadium"}</button></div>
     </main>`);
     on("[data-next]", "click", () => opts.onFinish(result));
+    wireExplain(Object.fromEntries(qs.map((q, i) => [i, {
+      question: q.q, answer: q.a[0], given: q.given || "", topic: q.tag || opts.name,
+    }])));
   }
 
   // ==========================================================================
@@ -2041,7 +2554,7 @@
     show(`<main class="screen space">
       <div class="topbar">
         <div class="brand">M Games</div>
-        <div class="topbar-right">${adminButton()}${councilButton()}${huntButton()}${travelButton()}<button class="btn sm secondary" data-mmc title="M Math Competition">📋 MMC</button><button class="btn sm secondary" data-games title="Other games">🎮 Games</button>${achButton()}${profileCard()}</div>
+        <div class="topbar-right">${adminButton()}${councilButton()}${huntButton()}${travelButton()}<button class="btn sm secondary" data-mmc title="M Math Competition">📋 MMC</button><button class="btn sm secondary" data-contests title="Contests written by other players">📝 Contests</button><button class="btn sm secondary" data-forum title="Discuss problems with other players">💬 Forum</button><button class="btn sm secondary" data-games title="Other games">🎮 Games</button>${achButton()}${profileCard()}</div>
       </div>
       <div class="planet-area">
         <div class="planet arena" ${themeStyle(t)}>
@@ -2075,6 +2588,8 @@
     on("[data-council]", "click", () => councilScreen(diamond));
     on("[data-hunt]", "click", () => huntScreen(diamond));
     on("[data-games]", "click", () => games(diamond));
+    on("[data-contests]", "click", () => contestList(diamond));
+    on("[data-forum]", "click", () => forumScreen(diamond));
     on("[data-travel]", "click", () => travel(diamond));
     on("[data-profile]", "click", () => profileScreen(diamond));
     on("[data-mmc]", "click", () => mmcHall(diamond));
@@ -2456,6 +2971,7 @@
         <div>
           <strong>${esc(c.title)}</strong> <span class="small muted">· ${esc(c.status)} · ${c.questionCount} question${c.questionCount === 1 ? "" : "s"}${c.mbucksReward ? ` · pays ${fmtXp(c.mbucksReward)} MBucks` : ""}</span>
           <div class="small muted">${esc(c.description)}</div>
+          <div class="small muted">by ${esc(c.creatorName || "a player")}${c.status === "approved" ? ` · ${fmtXp(c.takenCount)} sitting${c.takenCount === 1 ? "" : "s"}` : ""}</div>
         </div>
         ${tier >= 3 && c.status === "pending" ? `<span style="display:flex;gap:0.5rem;flex:none">
           <button class="btn sm" data-approve="${c.id}">Approve</button>
@@ -2578,8 +3094,11 @@
       refresh();
     });
     on("[data-ban]", "click", async (e) => {
+      // Read the id up front: awaiting the dialog outlives the event, and by
+      // then e.currentTarget is null (which is why Ban used to do nothing).
+      const banId = e.currentTarget.dataset.ban;
       if (!(await askConfirm("Ban this player? They keep their save but can no longer play or save progress."))) return;
-      try { await apiJson(`/api/admin/users/${e.currentTarget.dataset.ban}/ban`, { method: "POST" }); } catch {}
+      try { await apiJson(`/api/admin/users/${banId}/ban`, { method: "POST" }); } catch {}
       refresh();
     });
     on("[data-dismiss]", "click", async (e) => {
@@ -2607,39 +3126,59 @@
   // browser: what you typed goes to the server and comes back marked, so each
   // question pays only if it was actually right.
   async function contestList(back, notice) {
-    if (!API.me) {
-      show(`<main class="screen">${bar("Player contests")}
-        <div class="content">${finn("These are written by signed-in rulers and pay real MBucks, so you'll need to sign in to take one.")}</div>
-        <div class="footer between">
-          <button class="btn secondary" data-back>Back</button>
-          <a class="btn" href="/login">${API.google ? "Sign in with Google" : "Sign in"}</a>
-        </div>
-      </main>`);
-      on("[data-back]", "click", () => back());
-      return;
-    }
     show(`<main class="screen">${bar("Player contests")}<div class="content"><p class="muted">Loading…</p></div></main>`);
     let list = [];
-    try { list = (await apiJson("/api/admin/contests/approved")).contests || []; } catch {}
+    let failed = false;
+    // Browsing needs no account: the shelf is public so a contest somebody wrote
+    // can actually be found. Sitting one still needs signing in.
+    try { list = (await apiJson("/api/admin/contests/approved")).contests || []; } catch { failed = true; }
+
+    const card = (c) => {
+      const why = c.taken ? `<span class="tag">Taken</span>`
+        : c.mine ? `<span class="tag">Yours</span>` : "";
+      const sittings = `${fmtXp(c.takenCount)} sitting${c.takenCount === 1 ? "" : "s"}`;
+      const action = !API.me
+        ? `<a class="btn sm" href="/login">Sign in to take it</a>`
+        : c.mine ? `<button class="btn sm" disabled title="You wrote this one">Take it</button>`
+        : c.taken ? `<button class="btn sm" disabled title="One sitting each">Taken</button>`
+        : `<button class="btn sm" data-take="${c.id}">Take it</button>`;
+      return `<div class="admin-row">
+        <div>
+          <strong>${esc(c.title)}</strong> ${why}
+          <div class="small muted">${esc(c.description)}</div>
+          <div class="small muted">by ${esc(c.creatorName || "a player")} · ${c.questionCount} question${c.questionCount === 1 ? "" : "s"} · up to ${fmtXp(c.mbucksReward)} MBucks · ${sittings}</div>
+        </div>
+        <div class="row-actions">
+          <button class="btn sm secondary" data-discuss="${c.id}" data-title="${esc(c.title)}">💬 Discuss</button>
+          ${action}
+        </div>
+      </div>`;
+    };
+
+    const empty = failed
+      ? `<p class="notice-light">The contest shelf couldn't be loaded. Try again in a moment.</p>`
+      : `<p class="small muted">Nobody has had a contest approved yet.${myTier() >= 1 ? " You're Tier 1, so you can write the first one from the 🏛 panel." : ""}</p>`;
 
     show(`<main class="screen">${bar("Player contests")}
       <div class="content">
         <h2>📝 Player contests</h2>
-        <p class="small muted">Written by other rulers, approved by a Tier 3. One sitting each — every question pays its own MBucks.</p>
+        <p class="small muted">Written by other players and approved by a Tier 3. One sitting each — every question pays its own MBucks.</p>
         ${notice ? `<p class="notice-light">${esc(notice)}</p>` : ""}
-        ${list.length ? list.map((c) => `<div class="admin-row">
-          <div>
-            <strong>${esc(c.title)}</strong>
-            <div class="small muted">${esc(c.description)}</div>
-            <div class="small muted">${c.questionCount} question${c.questionCount === 1 ? "" : "s"} · up to ${fmtXp(c.mbucksReward)} MBucks</div>
-          </div>
-          <button class="btn sm" data-take="${c.id}">Take it</button>
-        </div>`).join("") : `<p class="small muted">Nobody has had a contest approved yet.</p>`}
+        ${!API.me && !failed ? `<p class="notice-light">You're browsing as a guest. Sign in to sit one and keep what it pays.</p>` : ""}
+        ${list.length ? list.map(card).join("") : empty}
       </div>
-      <div class="footer"><button class="btn secondary" data-back>Back</button></div>
+      <div class="footer between">
+        <button class="btn secondary" data-back>Back</button>
+        <button class="btn secondary" data-forum>💬 Forum</button>
+      </div>
     </main>`);
     on("[data-back]", "click", () => back());
+    on("[data-forum]", "click", () => forumScreen(() => contestList(back)));
     on("[data-take]", "click", (e) => contestPlay(Number(e.currentTarget.dataset.take), back));
+    on("[data-discuss]", "click", (e) => forumScreen(() => contestList(back), {
+      contestId: Number(e.currentTarget.dataset.discuss),
+      contestTitle: e.currentTarget.dataset.title,
+    }));
   }
 
   async function contestPlay(id, back) {
@@ -2685,11 +3224,11 @@
         });
       } catch {}
       if (!result) return contestList(back, "That submission didn't reach the server — nothing was recorded.");
-      contestResult(result, back);
+      contestResult(result, back, answers);
     });
   }
 
-  function contestResult(r, back) {
+  function contestResult(r, back, given) {
     show(`<main class="screen">${bar(r.title)}
       <div class="content">
         ${finn(r.mbucksEarned > 0
@@ -2699,12 +3238,227 @@
         ${r.marks.map((m, i) => `<div class="result-row"><span>
           ${i + 1}. ${esc(m.q)} <span class="muted">→ ${esc(m.answer)}</span>
           <span class="qtag">${m.correct ? `+${fmtXp(m.mbucks)}` : "0"} MBucks</span>
-        </span></div>`).join("")}
+        </span></div>${!m.correct && canExplain() ? explainRow(i) : ""}`).join("")}
       </div>
-      <div class="footer"><button class="btn" data-back>Back to contests</button></div>
+      <div class="footer between">
+        <button class="btn" data-back>Back to contests</button>
+        <button class="btn secondary" data-discuss>💬 Discuss these questions</button>
+      </div>
     </main>`);
+    wireExplain(Object.fromEntries(r.marks.map((m, i) => [i, {
+      question: m.q, answer: m.answer, given: (given || [])[i] || "", topic: r.title,
+    }])));
     on("[data-back]", "click", () => {
       claimWalletCredits().finally(() => contestList(back));
+    });
+    on("[data-discuss]", "click", () => {
+      claimWalletCredits().finally(() => forumScreen(() => contestList(back), {
+        contestId: r.contestId, contestTitle: r.title,
+      }));
+    });
+  }
+
+  // ---- Forum ------------------------------------------------------------------
+  // Somewhere to argue about the problems themselves. Reading is open to guests
+  // -- a worked answer nobody signed out can find is a worked answer nobody
+  // finds -- and posting needs an account. A thread can hang off a player
+  // contest, which is what the Discuss buttons open.
+  const FORUM_MAX_TITLE = 100;
+  const FORUM_MAX_BODY = 4000;
+
+  function agoText(ts) {
+    if (!ts) return "";
+    const sec = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+    if (sec < 60) return "just now";
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min} min ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr} hour${hr === 1 ? "" : "s"} ago`;
+    const day = Math.floor(hr / 24);
+    if (day < 7) return `${day} day${day === 1 ? "" : "s"} ago`;
+    return new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  }
+
+  const signInPrompt = (what) =>
+    `<p class="notice-light">You're reading as a guest. <a class="link-btn" href="/login">Sign in</a> to ${esc(what)}.</p>`;
+
+  // opts: { contestId, contestTitle, notice } -- with a contestId the screen is
+  // that one contest's threads instead of the whole board.
+  async function forumScreen(back, opts) {
+    const o = opts || {};
+    const scoped = Number.isFinite(o.contestId);
+    const heading = scoped ? `💬 ${o.contestTitle || "Contest"}` : "💬 Forum";
+    show(`<main class="screen">${bar("Forum")}<div class="content"><p class="muted">Loading…</p></div></main>`);
+
+    let data = null;
+    try {
+      data = await apiJson(`/api/forum/threads${scoped ? `?contest=${o.contestId}` : ""}`);
+    } catch {}
+    if (!data) {
+      show(`<main class="screen">${bar("Forum")}
+        <div class="content"><h2>${heading}</h2>
+          <p class="notice-light">The forum couldn't be loaded. Try again in a moment.</p></div>
+        <div class="footer"><button class="btn secondary" data-back>Back</button></div>
+      </main>`);
+      return on("[data-back]", "click", () => back());
+    }
+
+    const threads = data.threads || [];
+    const row = (t) => `<div class="thread-row">
+      <div>
+        <div class="t-title">${esc(t.title)}${t.locked ? ` <span class="tag">Locked</span>` : ""}</div>
+        <div class="small muted">by ${esc(t.authorName)} · ${fmtXp(t.replyCount)} repl${t.replyCount === 1 ? "y" : "ies"} · last post ${esc(agoText(t.lastPostAt))}</div>
+        ${!scoped && t.contestTitle ? `<div class="small muted">on the contest “${esc(t.contestTitle)}”</div>` : ""}
+      </div>
+      <button class="btn sm secondary" data-thread="${t.id}">Open</button>
+    </div>`;
+
+    show(`<main class="screen">${bar("Forum")}
+      <div class="content">
+        <h2>${heading}</h2>
+        <p class="small muted">${scoped
+          ? "Threads about this contest. Say how you got a question, or make the case that an answer is wrong."
+          : "Ask about a problem, post how you got it, or argue about an answer. Every thread is public to read."}</p>
+        ${o.notice ? `<p class="notice-light">${esc(o.notice)}</p>` : ""}
+        ${data.canPost ? "" : data.signedIn
+          ? `<p class="notice-light">This account can read the forum but not post in it.</p>`
+          : signInPrompt("start a thread or reply")}
+        ${threads.length ? threads.map(row).join("")
+          : `<p class="small muted">${scoped ? "No threads about this contest yet — start the first one." : "No threads yet. Start the first one."}</p>`}
+      </div>
+      <div class="footer between">
+        <button class="btn secondary" data-back>Back</button>
+        ${data.canPost ? `<button class="btn" data-new>New thread</button>` : ""}
+      </div>
+    </main>`);
+    const reopen = (notice) => forumScreen(back, { ...o, notice });
+    on("[data-back]", "click", () => back());
+    on("[data-thread]", "click", (e) => forumThread(Number(e.currentTarget.dataset.thread), reopen));
+    on("[data-new]", "click", () => forumCompose(reopen, o));
+  }
+
+  function forumCompose(back, opts) {
+    const o = opts || {};
+    const scoped = Number.isFinite(o.contestId);
+    show(`<main class="screen">${bar("Forum")}
+      <div class="content">
+        <h2>New thread</h2>
+        ${scoped ? `<p class="small muted">This one will be filed under the contest “${esc(o.contestTitle || "")}”.</p>` : ""}
+        <p class="small muted">Post the working, not just the answer — that's what makes a thread worth reading.</p>
+        <form class="compose" data-form onsubmit="return false">
+          <input type="text" data-title maxlength="${FORUM_MAX_TITLE}" placeholder="What's the question?" aria-label="Thread title">
+          <textarea data-body maxlength="${FORUM_MAX_BODY}" placeholder="Where you got stuck, what you tried, what you think the answer is…" aria-label="Your first post"></textarea>
+        </form>
+        <p class="notice-light" data-error hidden></p>
+      </div>
+      <div class="footer between">
+        <button class="btn secondary" data-back>Cancel</button>
+        <button class="btn" data-post>Post it</button>
+      </div>
+    </main>`);
+    const err = (msg) => {
+      const box = app.querySelector("[data-error]");
+      box.textContent = msg;
+      box.hidden = false;
+    };
+    on("[data-back]", "click", () => back());
+    on("[data-post]", "click", async (e) => {
+      const button = e.currentTarget;
+      const title = app.querySelector("[data-title]").value.trim();
+      const body = app.querySelector("[data-body]").value.trim();
+      if (!title || !body) return err("A thread needs a title and something to say.");
+      button.disabled = true;
+      let created = null;
+      try {
+        created = await apiJson("/api/forum/threads", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, body, contestId: scoped ? o.contestId : null }),
+        });
+      } catch (ex) {
+        button.disabled = false;
+        return err(String(ex.message) === "429"
+          ? "That was quick — give it a few seconds between posts."
+          : "That didn't post. Check you're still signed in and try again.");
+      }
+      forumThread(created.id, back);
+    });
+  }
+
+  async function forumThread(id, back) {
+    show(`<main class="screen">${bar("Forum")}<div class="content"><p class="muted">Loading…</p></div></main>`);
+    let t = null;
+    try { t = await apiJson(`/api/forum/threads/${id}`); } catch {}
+    if (!t) return back("That thread couldn't be opened.");
+
+    const post = (p, i) => `<div class="post ${i === 0 ? "op" : ""} ${p.deleted ? "removed" : ""}">
+      <div class="post-head">
+        <strong>${esc(p.authorName)}${i === 0 ? " · started this" : ""}</strong>
+        <span class="small muted">${esc(agoText(p.createdAt))}${p.canDelete ? ` · <button class="btn link" data-del="${p.id}">Delete</button>` : ""}</span>
+      </div>
+      <p class="post-body">${p.deleted ? "This post was taken down." : esc(p.body)}</p>
+    </div>`;
+
+    show(`<main class="screen">${bar("Forum")}
+      <div class="content">
+        <h2>${esc(t.title)}${t.locked ? ` <span class="tag">Locked</span>` : ""}</h2>
+        <p class="small muted">Started by ${esc(t.authorName)} ${esc(agoText(t.createdAt))}${
+          t.contestTitle ? ` · on the contest “${esc(t.contestTitle)}”` : ""}</p>
+        ${(t.posts || []).map(post).join("")}
+        ${t.canPost ? `<form class="compose" onsubmit="return false">
+            <textarea data-reply maxlength="${FORUM_MAX_BODY}" placeholder="Add to the thread…" aria-label="Your reply"></textarea>
+            <div class="row-actions"><button class="btn" data-send>Post reply</button></div>
+          </form>`
+          : t.locked ? `<p class="notice-light">This thread is locked — no new replies.</p>`
+          : t.signedIn ? `<p class="notice-light">This account can read the forum but not post in it.</p>`
+          : signInPrompt("reply")}
+        <p class="notice-light" data-error hidden></p>
+      </div>
+      <div class="footer between">
+        <button class="btn secondary" data-back>Back to threads</button>
+        ${t.canModerate ? `<button class="btn secondary" data-lock>${t.locked ? "Unlock thread" : "Lock thread"}</button>` : ""}
+      </div>
+    </main>`);
+    const again = () => forumThread(id, back);
+    const err = (msg) => {
+      const box = app.querySelector("[data-error]");
+      box.textContent = msg;
+      box.hidden = false;
+    };
+    on("[data-back]", "click", () => back());
+    on("[data-send]", "click", async (e) => {
+      const button = e.currentTarget;
+      const body = app.querySelector("[data-reply]").value.trim();
+      if (!body) return err("Write something first.");
+      button.disabled = true;
+      try {
+        await apiJson(`/api/forum/threads/${id}/posts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body }),
+        });
+      } catch (ex) {
+        button.disabled = false;
+        return err(String(ex.message) === "429"
+          ? "That was quick — give it a few seconds between posts."
+          : String(ex.message) === "409" ? "This thread was locked while you were typing."
+          : "That reply didn't post. Try again.");
+      }
+      again();
+    });
+    on("[data-del]", "click", async (e) => {
+      // Read the id before awaiting: once the event has finished dispatching,
+      // e.currentTarget is null.
+      const postId = e.currentTarget.dataset.del;
+      if (!(await askConfirm("Take this post down? The text goes for good."))) return;
+      try { await apiJson(`/api/forum/posts/${postId}/delete`, { method: "POST" }); } catch {}
+      again();
+    });
+    on("[data-lock]", "click", async () => {
+      try {
+        await apiJson(`/api/forum/threads/${id}/${t.locked ? "unlock" : "lock"}`, { method: "POST" });
+      } catch {}
+      again();
     });
   }
 
@@ -2865,6 +3619,6 @@
   bootSync().then(() => {
     if (API.me && API.me.banned) return bannedScreen();
     if (API.me) unlock("start"); // "Log in"
-    welcome();
+    projectM();
   });
 })();

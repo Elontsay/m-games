@@ -107,6 +107,55 @@ CREATE TABLE IF NOT EXISTS profile_views (
     PRIMARY KEY (viewer_id, viewed_id)
 );
 
+-- ---- Forum: threads and replies ---------------------------------------------
+-- A thread's opening message is an ordinary post row, so a thread reads the
+-- same from its first line to its last. `contest_id` is set when the thread
+-- hangs off a player-written contest; NULL is a general discussion.
+CREATE TABLE IF NOT EXISTS forum_threads (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    author_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    contest_id     INTEGER REFERENCES custom_contests(id) ON DELETE SET NULL,
+    title          TEXT NOT NULL,
+    created_at     REAL NOT NULL,
+    last_post_at   REAL NOT NULL,
+    locked         INTEGER NOT NULL DEFAULT 0
+);
+-- A deleted post keeps its row and loses only its text, so the replies quoting
+-- it still make sense.
+CREATE TABLE IF NOT EXISTS forum_posts (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_id      INTEGER NOT NULL REFERENCES forum_threads(id) ON DELETE CASCADE,
+    author_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body           TEXT NOT NULL,
+    created_at     REAL NOT NULL,
+    deleted_at     REAL,
+    deleted_by     INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_forum_posts_thread ON forum_posts(thread_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_forum_threads_contest ON forum_threads(contest_id);
+
+-- ---- AI review: Claude explaining a question the player got wrong ------------
+-- Cached by (question, wrong answer, right answer): the generators repeat, and
+-- so do the mistakes, so the same explanation is usually already paid for.
+CREATE TABLE IF NOT EXISTS ai_reviews (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    cache_key   TEXT NOT NULL UNIQUE,
+    question    TEXT NOT NULL,
+    given       TEXT NOT NULL,
+    answer      TEXT NOT NULL,
+    explanation TEXT NOT NULL,
+    created_at  REAL NOT NULL
+);
+-- One row per request. `cached = 0` means it actually cost a model call, which
+-- is what the per-account daily allowance counts.
+CREATE TABLE IF NOT EXISTS ai_review_requests (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    cached     INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_review_requests_user ON ai_review_requests(user_id, created_at);
+
 -- ---- Hunt for the Traitor ----------------------------------------------------
 -- Where an account was seen and when. The Hunt's cabin clue reads from this.
 CREATE TABLE IF NOT EXISTS activity_log (

@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "m-games",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["run.py"],
+      "port": 5001,
+      "autoPort": false,
+      "url": "http://127.0.0.1:5001",
+      "env": { "PORT": "5001" }
+    }
+  ]
+}

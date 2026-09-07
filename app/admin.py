@@ -12,6 +12,7 @@ from flask import Blueprint, abort, jsonify, request
 
 from .auth import current_user, require_active_user, require_tier, tier_of
 from .db import get_db, get_user
+from .players import _clean_name
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
@@ -63,14 +64,23 @@ def _questions_of(row) -> list:
     return parsed if isinstance(parsed, list) else []
 
 
+# The catalog queries below join in the author and a completion count. Plain
+# `SELECT *` rows don't have them, so read them only when they're there.
+def _extra(row, key, default=None):
+    return row[key] if key in row.keys() else default
+
+
 def _contest_dict(row, answers: bool) -> dict:
     """`answers` decides whether the answer key travels with the contest. It goes
     to the author and to a Tier 3 reviewing it -- never to a player about to sit
     it, or the contest would come with its own solutions."""
     questions = _questions_of(row)
+    creator_name = _extra(row, "creator_name")
     return {
         "id": row["id"],
         "creatorUserId": row["creator_user_id"],
+        "creatorName": _clean_name(creator_name) if creator_name else None,
+        "takenCount": _extra(row, "taken_count", 0) or 0,
         "title": row["title"],
         "description": row["description"],
         "mbucksReward": row["mbucks_reward"],
@@ -114,6 +124,16 @@ def create_contest():
     return jsonify(_contest_dict(row, answers=True)), 201
 
 
+# Every listing goes through this so a contest always arrives with its author's
+# name and the number of players who have sat it -- a catalog of anonymous
+# titles tells you nothing about which ones are worth your one attempt.
+_CATALOG_SELECT = """
+    SELECT c.*, u.name AS creator_name,
+           (SELECT COUNT(*) FROM contest_completions cc WHERE cc.contest_id = c.id) AS taken_count
+    FROM custom_contests c JOIN users u ON u.id = c.creator_user_id
+"""
+
+
 @admin_bp.get("/contests")
 def list_contests():
     """Tier 3+ sees every contest (so it can review the pending queue); everyone
@@ -122,10 +142,10 @@ def list_contests():
     db = get_db()
     reviewer = tier_of(user) >= 3
     if reviewer:
-        rows = db.execute("SELECT * FROM custom_contests ORDER BY created_at DESC").fetchall()
+        rows = db.execute(_CATALOG_SELECT + " ORDER BY c.created_at DESC").fetchall()
     else:
         rows = db.execute(
-            "SELECT * FROM custom_contests WHERE creator_user_id = ? OR status = 'approved' ORDER BY created_at DESC",
+            _CATALOG_SELECT + " WHERE c.creator_user_id = ? OR c.status = 'approved' ORDER BY c.created_at DESC",
             (user["id"],),
         ).fetchall()
     # A reviewer needs the answers to judge a contest, and an author already
@@ -137,13 +157,33 @@ def list_contests():
 
 @admin_bp.get("/contests/approved")
 def list_approved_contests():
-    """The public catalog anyone signed in can attempt."""
-    if current_user() is None:
-        abort(401)
-    rows = get_db().execute(
-        "SELECT * FROM custom_contests WHERE status = 'approved' ORDER BY created_at DESC"
-    ).fetchall()
-    return jsonify(contests=[_contest_dict(r, answers=False) for r in rows])
+    """The public catalog. Browsing it needs no account -- an approved contest is
+    published work, and hiding the shelf behind sign-in is what kept player-written
+    contests unfindable. Sitting one still needs an account (see /play)."""
+    viewer = current_user()
+    db = get_db()
+    rows = db.execute(_CATALOG_SELECT + " WHERE c.status = 'approved' ORDER BY c.created_at DESC").fetchall()
+    taken = set()
+    if viewer is not None:
+        taken = {
+            r["contest_id"]
+            for r in db.execute(
+                "SELECT contest_id FROM contest_completions WHERE user_id = ?", (viewer["id"],)
+            ).fetchall()
+        }
+    out = []
+    for row in rows:
+        contest = _contest_dict(row, answers=False)
+        # The shelf shows what a contest is, not what's in it. You get one
+        # sitting, so the questions arrive from /play when you spend it.
+        contest.pop("questions", None)
+        # Why a given contest isn't sittable, so the catalog can say so instead
+        # of only failing when the player taps it.
+        contest["mine"] = viewer is not None and row["creator_user_id"] == viewer["id"]
+        contest["taken"] = row["id"] in taken
+        contest["playable"] = viewer is not None and not contest["mine"] and not contest["taken"]
+        out.append(contest)
+    return jsonify(contests=out, signedIn=viewer is not None)
 
 
 def _decide_contest(contest_id: int, status: str):
@@ -233,6 +273,7 @@ def submit_contest(contest_id: int):
     db.commit()
     return jsonify(
         ok=True,
+        contestId=contest_id,  # so the result screen can open this contest's forum threads
         title=row["title"],
         correct=sum(1 for m in marks if m["correct"]),
         total=len(marks),

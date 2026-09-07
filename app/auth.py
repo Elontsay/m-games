@@ -148,15 +148,19 @@ def logout():
 
 @auth_bp.get("/api/me")
 def me():
+    from .tutor import ai_review_configured  # local import: tutor imports from here
+
     user = current_user()
     if user is None:
         return jsonify(
             signedIn=False,
             google=bool(current_app.config["GOOGLE_CLIENT_ID"]),
             devLogin=bool(current_app.config["DEV_LOGIN"]),
+            aiReview=ai_review_configured(),
         )
     return jsonify(
         signedIn=True,
+        aiReview=ai_review_configured(),
         name=user["name"],
         email=user["email"],
         picture=user["picture"],

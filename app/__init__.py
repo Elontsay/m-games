@@ -31,10 +31,12 @@ from .api import api_bp  # noqa: E402
 from .arena import arena_bp  # noqa: E402
 from .auth import auth_bp, oauth  # noqa: E402
 from .db import init_db  # noqa: E402
+from .forum import forum_bp  # noqa: E402
 from .hunt import hunt_bp  # noqa: E402
 from .players import players_bp  # noqa: E402
 from .seed import seed_world  # noqa: E402
 from .social import social_bp  # noqa: E402
+from .tutor import tutor_bp  # noqa: E402
 from .wallet import wallet_bp  # noqa: E402
 
 GOOGLE_METADATA_URL = "https://accounts.google.com/.well-known/openid-configuration"
@@ -74,6 +76,8 @@ def create_app() -> Flask:
     app.register_blueprint(wallet_bp)
     app.register_blueprint(hunt_bp)
     app.register_blueprint(social_bp)
+    app.register_blueprint(forum_bp)
+    app.register_blueprint(tutor_bp)
 
     seed_world(app)  # the Hunt's cast; no-op once they exist
 
