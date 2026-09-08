@@ -194,7 +194,7 @@
   function checkLevel3Sets() {
     const t = tier();
     if (!t || t.tournament) return;
-    const all = t.stadiums.every((s) => state.results[levelId(s, s.levels[2])]);
+    const all = t.stadiums.every((s) => cleared(state.results[levelId(s, s.levels[2])]));
     if (!all) return;
     if (state.tierIndex >= CHAIN.indexOf("Silver")) unlock("l3a");
     if (state.tierIndex >= CHAIN.indexOf("Gold")) unlock("l3b");
@@ -313,6 +313,11 @@
   const freeRoam = () => !!state.champion;
   const totalPts = (qs) => qs.reduce((t, q) => t + q.points, 0);
   const levelId = (stadium, level) => `${tierName()}:${stadium.id}:L${level.level}`;
+  // A stadium level is cleared at 70%. Below that it stays open: the player is
+  // sent to the guide and can sit it again against a freshly generated set.
+  const PASS_MARK = 0.7;
+  const pctOf = (r) => (r && r.total ? Math.round((r.earned / r.total) * 100) : 0);
+  const cleared = (r) => !!r && pctOf(r) >= PASS_MARK * 100;
   const coronationId = () => `${tierName()}:coronation`;
   const levelXp = (l) => l.count * l.points;
   const buildQuestions = (make, count, points) => Array.from({ length: count }, () => ({ ...make(), points }));
@@ -754,7 +759,8 @@
     </main>`);
     on("[data-back]", "click", () => (back ? back() : handbook()));
     on("[data-goto]", "click", (e) => handbookSubject(e.currentTarget.dataset.goto, back));
-    on("[data-guide]", "click", (e) => handbookGuide(id, Number(e.currentTarget.dataset.guide), back));
+    on("[data-guide]", "click", (e) =>
+      handbookGuide(id, Number(e.currentTarget.dataset.guide), () => handbookSubject(id, back)));
     on("[data-play]", "click", () => { const st = stadiumFor(s); if (st) stadium(st); });
   }
 
@@ -825,7 +831,7 @@
           esc(opens.map((x) => x.name).join(", "))}.</p>` : ""}
       </div>
       <div class="footer between">
-        <button class="btn secondary" data-back>Back to ${esc(s.name)}</button>
+        <button class="btn secondary" data-back>${back ? "Back" : `Back to ${esc(s.name)}`}</button>
         ${stadiumFor(s) ? `<button class="btn secondary" data-play>🎮 Play the stadium</button>` : ""}
         ${status === "locked" ? ""
           : status === "done"
@@ -833,14 +839,15 @@
             : `<button class="btn" data-mark>I've finished this guide</button>`}
       </div>
     </main>`);
-    on("[data-back]", "click", () => handbookSubject(id, back));
+    const leave = () => (back ? back() : handbookSubject(id));
+    on("[data-back]", "click", leave);
     on("[data-play]", "click", () => { const st = stadiumFor(s); if (st) stadium(st); });
-    on("[data-mark]", "click", () => { setGuideDone(id, n, true); handbookSubject(id, back); });
+    on("[data-mark]", "click", () => { setGuideDone(id, n, true); leave(); });
     on("[data-unmark]", "click", async () => {
       // Un-finishing can strand levels downstream, so make it a deliberate act.
       if (await askConfirm("Mark this guide unfinished? Anything it opened up will lock again.")) {
         setGuideDone(id, n, false);
-        handbookSubject(id, back);
+        leave();
       }
     });
   }
@@ -928,7 +935,8 @@
           <li>The Games climb through <strong>${CHAIN.length} tiers</strong>: ${CHAIN.join(" → ")}. You start in <strong>${esc(tierName())}</strong>.</li>
           <li>Each tier lives on a planet with <strong>${t.stadiums.length} stadiums</strong>: ${t.stadiums.map((s) => esc(s.name)).join(", ")}. Every stadium has a Level 1, Level 2, and Level 3 contest, and each tier's topics get harder.</li>
           <li>Every contest has 10 questions and awards <strong>XP</strong>. A green check earns a question's full points and a yellow check earns half. Each tier pays 10× the one before.</li>
-          <li>You can only take each contest <strong>once</strong>, so make your tries count.</li>
+          <li>Clear a contest with <strong>70%</strong> or better and it's done. Fall short and I'll send you to the
+            guide for that subject, then you can sit it again — with a brand-new set of questions.</li>
           <li>A <strong>perfect score</strong> triggers a bonus round: one extra question worth bonus XP.</li>
           <li>The fifth stadium is the <strong>${esc(c.name)}</strong>. You need <strong>${fmtXp(c.xpRequired)} XP</strong> to enter, and you get one shot every <strong>${c.cooldownHours} hours</strong>.</li>
           <li>The Coronation draws ${c.drawLevel2} random Level 2 and ${c.drawLevel3} random Level 3 questions from all stadiums. Get <strong>${c.maxWrong} or fewer wrong</strong> and you're promoted to <strong>${esc(nextTierName() || "the top")}</strong> with fresh XP and new stadiums.</li>
@@ -989,7 +997,7 @@
     else coroText = coroResult ? "Try again" : "Open";
 
     const doors = t.stadiums.map((s) => {
-      const done = s.levels.filter((l) => state.results[levelId(s, l)]).length;
+      const done = s.levels.filter((l) => cleared(state.results[levelId(s, l)])).length;
       return `<button class="door-btn" data-stadium="${s.id}">
         <span class="subject">${esc(s.name)}</span>
         <span class="door"><span class="knob"></span></span>
@@ -1093,7 +1101,9 @@
     show(`<main class="screen">${bar(s.name)}
       <div class="content">
         <h2>${esc(s.name)} stadium</h2>
-        <p class="muted small">Three contests, 10 questions each. Green checks earn full points, yellow checks earn half. One attempt per contest.${s.lesson ? " The lesson is always there to re-read." : ""}</p>
+        <p class="muted small">Three contests, 10 questions each. Green checks earn full points, yellow checks earn half.
+          Score 70% or more to clear a level; below that you're sent to the guide and can sit it again on a fresh set of questions.${
+          s.lesson ? " The lesson is always there to re-read." : ""}</p>
         <div class="levels">${s.levels.map((l) => {
           const r = state.results[levelId(s, l)];
           return `<div class="level">
@@ -1101,9 +1111,11 @@
               <strong>Level ${l.level}</strong>
               <div class="small muted">${l.count} questions · ${fmtXp(l.points)} XP each · ${fmtXp(levelXp(l))} XP total · bonus: ${esc(l.bonus.label)} for +${fmtXp(l.bonus.xp)} XP</div>
             </div>
-            ${r
-              ? `<span class="done">Done · ${fmtXp(r.earned)}/${fmtXp(r.total)} XP${r.bonus ? (r.bonus.correct ? ` · bonus +${fmtXp(r.bonus.xp)}` : " · bonus missed") : ""}</span>${freeRoam() ? `<button class="btn sm secondary" data-level="${l.level}">Play again</button>` : ""}`
-              : `<button class="btn sm" data-level="${l.level}">Play</button>${isAdmin() ? `<button class="btn sm secondary" data-skip-level="${l.level}" title="Admin: mark as done with full XP">Skip</button>` : ""}`}
+            ${cleared(r)
+              ? `<span class="done">Done · ${pctOf(r)}% · ${fmtXp(r.earned)}/${fmtXp(r.total)} XP${r.bonus ? (r.bonus.correct ? ` · bonus +${fmtXp(r.bonus.xp)}` : " · bonus missed") : ""}</span>${freeRoam() ? `<button class="btn sm secondary" data-level="${l.level}">Play again</button>` : ""}`
+              : r
+                ? `<span class="short">${pctOf(r)}% · needs 70%</span><button class="btn sm secondary" data-level-guide="${l.level}">📕 Guide</button><button class="btn sm" data-level="${l.level}">Try again</button>`
+                : `<button class="btn sm" data-level="${l.level}">Play</button>${isAdmin() ? `<button class="btn sm secondary" data-skip-level="${l.level}" title="Admin: mark as done with full XP">Skip</button>` : ""}`}
           </div>`;
         }).join("")}</div>
       </div>
@@ -1115,6 +1127,8 @@
     </main>`);
     on("[data-lesson]", "click", () => lessonScreen(s, () => stadium(s)));
     on("[data-guide]", "click", () => handbookSubject(s.id, () => stadium(s)));
+    on("[data-level-guide]", "click", (e) =>
+      handbookGuide(s.id, Number(e.currentTarget.dataset.levelGuide), () => stadium(s)));
     on("[data-level]", "click", (e) => playLevel(s, s.levels.find((l) => l.level === Number(e.currentTarget.dataset.level))));
     on("[data-skip-level]", "click", (e) => {
       if (!isAdmin()) return;
@@ -1125,13 +1139,18 @@
   }
 
   function playLevel(s, l) {
-    if (state.results[levelId(s, l)] && !freeRoam()) return stadium(s); // no retakes (champions may replay)
+    // A cleared level cannot be retaken; one that fell short of the pass mark
+    // can, and buildQuestions draws a fresh set every time. Champions replay
+    // anything.
+    if (cleared(state.results[levelId(s, l)]) && !freeRoam()) return stadium(s);
     runContest({
       id: levelId(s, l),
       name: `${s.name} · Level ${l.level}`,
       questions: buildQuestions(l.make, l.count, l.points),
       awardsXp: true,
       level: l.level,
+      subjectId: s.id,
+      stadium: s,
       bonus: l.bonus,
       onFinish: () => stadium(s),
     });
@@ -2405,8 +2424,19 @@
       const earned = qs.reduce((t, q) => t + (q.status === "green" ? q.points : q.status === "yellow" ? q.points / 2 : 0), 0);
       const wrong = qs.filter((q) => q.status === "purple").length;
       const result = { earned, total: totalPoints, marks: qs.map((q) => q.status), wrong, bonus: null };
-      state.results[opts.id] = result;
-      if (opts.awardsXp) state.xp += earned;
+
+      // Retakes only ever top a score up, never stack: XP is paid on the
+      // improvement over the best previous attempt, so failing on purpose to
+      // sit an easier draw earns nothing.
+      const previous = state.results[opts.id];
+      const gained = Math.max(0, earned - (previous ? previous.earned : 0));
+      if (!previous || earned >= previous.earned) state.results[opts.id] = result;
+      if (opts.awardsXp) state.xp += gained;
+
+      // Clearing a stadium level is the strongest possible evidence that its
+      // reading has been done, so it credits the matching handbook guide.
+      result.passed = opts.subjectId ? earned / totalPoints >= PASS_MARK : true;
+      if (opts.subjectId && result.passed) setGuideDone(opts.subjectId, opts.level, true);
       saveState();
       const perfect = qs.every((q) => q.status === "green");
       if (!opts.guided) {
@@ -2538,6 +2568,11 @@
       headline = result.bonus.correct
         ? `Perfect contest and you nailed the bonus: ${fmtXp(result.earned)} XP plus ${fmtXp(result.bonus.xp)} bonus XP.`
         : `Perfect contest for ${fmtXp(result.earned)} XP. The bonus question got away, but that's still a clean sweep.`;
+    } else if (opts.subjectId && !result.passed) {
+      headline = `${pct}% — under the 70% you need to clear this level. Go and read the ${opts.stadium
+        ? opts.stadium.name.toLowerCase() : "subject"} guide, then sit it again; you'll get a brand-new set of questions.`;
+    } else if (opts.subjectId) {
+      headline = `${pct}% clears it. Level ${opts.level} of the ${esc(opts.stadium ? opts.stadium.name : "")} guide is marked as read in your handbook.`;
     } else {
       headline = `You earned ${fmtXp(result.earned)} XP. Contests can't be retaken, so on to the next one.`;
     }
@@ -2546,7 +2581,8 @@
       <div class="content">
         ${finn(headline)}
         <h2>${esc(opts.name)}</h2>
-        <div class="score">${fmtXp(result.earned)} / ${fmtXp(result.total)} <span class="muted" style="font-size:1rem;font-weight:500">points · ${pct}%${opts.isCoronation ? ` · ${result.wrong} wrong` : ""}</span></div>
+        <div class="score">${fmtXp(result.earned)} / ${fmtXp(result.total)} <span class="muted" style="font-size:1rem;font-weight:500">points · ${pct}%${
+          opts.isCoronation ? ` · ${result.wrong} wrong` : opts.subjectId ? ` · ${result.passed ? "cleared" : "70% to clear"}` : ""}</span></div>
         ${opts.awardsXp ? `<p><strong>+${fmtXp(result.earned)} XP</strong>${result.bonus && result.bonus.correct ? ` <strong>+${fmtXp(result.bonus.xp)} bonus XP</strong>` : ""} awarded. Total: ${fmtXp(state.xp)} XP.</p>` : ""}
         ${qs.map((q, i) => {
           // "Wrong" here means it took more than one try, or never landed at all.
@@ -2557,9 +2593,16 @@
         ${result.bonus ? `<div class="result-row">${markEl(result.bonus.correct ? "green" : "purple")}<span>Bonus: ${esc(result.bonus.q)} · ${result.bonus.correct ? `+${fmtXp(result.bonus.xp)} XP` : "no bonus"}</span></div>` : ""}
         ${legend()}
       </div>
-      <div class="footer"><button class="btn" data-next>${opts.guided ? "Learn the System" : passed ? "Get promoted" : opts.isCoronation ? "Back to the planet" : "Back to the stadium"}</button></div>
+      ${opts.subjectId && !result.passed ? `<div class="footer between">
+        <button class="btn secondary" data-next>Back to the stadium</button>
+        ${guideFor(opts.subjectId, opts.level) ? `<button class="btn secondary" data-guide>📕 Read the guide</button>` : ""}
+        <button class="btn" data-retry>Try again</button>
+      </div>` : `<div class="footer"><button class="btn" data-next>${opts.guided ? "Learn the System" : passed ? "Get promoted" : opts.isCoronation ? "Back to the planet" : "Back to the stadium"}</button></div>`}
     </main>`);
     on("[data-next]", "click", () => opts.onFinish(result));
+    // Straight to the level's own guide, and straight back here afterwards.
+    on("[data-guide]", "click", () => handbookGuide(opts.subjectId, opts.level, () => results(opts, qs, result)));
+    on("[data-retry]", "click", () => playLevel(opts.stadium, opts.stadium.levels.find((l) => l.level === opts.level)));
     wireExplain(Object.fromEntries(qs.map((q, i) => [i, {
       question: q.q, answer: q.a[0], given: q.given || "", topic: q.tag || opts.name,
     }])));

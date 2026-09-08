@@ -69,6 +69,12 @@ Without Google credentials, leave `DEV_LOGIN=1` in `.env` and the **Sign in** bu
 4. Add your email to `ADMIN_EMAILS` to get the admin hacks panel on that account.
 5. Deploying somewhere? Add that origin's `/auth/callback` to the same list.
 
+Stadium levels are graded against a **70% pass mark**. Clear one and its handbook guide is
+marked as read, since passing the contest is stronger evidence than ticking a box. Fall short and
+Finn sends you to that level's guide, and the level stays open for another attempt against a freshly
+generated set of questions. Retakes pay XP only on the improvement over your best attempt, so
+failing deliberately to draw an easier set earns nothing.
+
 Reaching Tier 2 — by winning an Arena month — makes Finn interrupt with an urgent alert that
 opens Hunt for the Traitor, rather than leaving it behind a button to be noticed. It fires
 once and is remembered in the save.
