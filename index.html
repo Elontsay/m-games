@@ -198,6 +198,25 @@
     .admin-row select, .admin-row input { font: inherit; padding: 0.4rem 0.6rem; border: 1px solid #cbd5e1; border-radius: 0.5rem; }
     .notice-light { background: #fefce8; border: 1px solid #eab308; border-radius: 0.5rem; padding: 0.5rem 0.75rem; font-size: 0.9rem; }
 
+    /* ---- Finn's urgent alert ---- */
+    .alert-screen { background: #fff7f7; }
+    .urgent-badge {
+      display: inline-block; background: #dc2626; color: #fff; font-weight: 700;
+      font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase;
+      border-radius: 999px; padding: 0.3rem 0.9rem; margin-bottom: 1rem;
+      animation: urgent-pulse 1.6s ease-in-out 3;
+    }
+    @keyframes urgent-pulse { 50% { opacity: 0.45; } }
+    /* Respect a reader who has asked the system to stop animating things. */
+    @media (prefers-reduced-motion: reduce) { .urgent-badge { animation: none; } }
+    .urgent-body {
+      text-align: left; width: min(34rem, 100%); margin: 1rem auto 0;
+      border-left: 3px solid #dc2626; background: #fff; border-radius: 0 0.75rem 0.75rem 0;
+      padding: 0.9rem 1.1rem;
+    }
+    .urgent-body p { margin: 0 0 0.7rem; }
+    .urgent-body p:last-child { margin-bottom: 0; }
+
     /* ---- Project M hub ---- */
     .hub-sub { text-align: center; color: #64748b; margin: 0.5rem 0 0; }
     .hub { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 1rem; width: min(44rem, 100%); margin: 0 auto; padding: 2rem 1.5rem; }

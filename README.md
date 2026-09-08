@@ -66,6 +66,10 @@ Without Google credentials, leave `DEV_LOGIN=1` in `.env` and the **Sign in** bu
 4. Add your email to `ADMIN_EMAILS` to get the admin hacks panel on that account.
 5. Deploying somewhere? Add that origin's `/auth/callback` to the same list.
 
+Reaching Tier 2 — by winning an Arena month — makes Finn interrupt with an urgent alert that
+opens Hunt for the Traitor, rather than leaving it behind a button to be noticed. It fires
+once and is remembered in the save.
+
 Progress is stored in `instance/mgames.db` (SQLite). Signing in on a new device loads the saved progress from the account.
 
 ## AI review

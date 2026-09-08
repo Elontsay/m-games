@@ -22,6 +22,17 @@
     if (!r.ok) throw new Error(String(r.status));
     return r.json();
   }
+  // Tier is granted server-side -- winning an Arena month, or the owner promoting
+  // someone -- so the client only learns about it by asking again. bootSync does
+  // this once; anything that might have changed a tier calls it too.
+  async function refreshMe() {
+    if (!API.me) return null;
+    try {
+      const me = await apiJson("/api/me");
+      if (me && me.signedIn) API.me = me;
+    } catch {}
+    return API.me;
+  }
   function schedulePush() {
     if (!API.me) return;
     clearTimeout(API.pushTimer);
@@ -247,6 +258,7 @@
     results: {},                 // contestId -> { earned, total, marks, wrong, bonus }
     lessons: {},                 // "Tier:stadiumId" -> true once its lesson has been read
     guides: {},                  // "subjectId:L1" -> true once that handbook guide is finished
+    huntAlerted: false,          // Finn's urgent Tier 2 alert has been delivered
     introDone: false,
     coronationLastAttempt: null, // timestamp (ms) of the last Coronation entry
     diamond: { active: false, round: 0, opponent: null },
@@ -401,6 +413,51 @@
     const h = Math.floor(totalMin / 60);
     const m = totalMin % 60;
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+
+  // ---- Finn's urgent alert: the Hunt opens itself at Tier 2 -----------------
+  // Reaching Tier 2 is what qualifies you to investigate, so the Hunt should not
+  // sit behind a button waiting to be noticed. The first time the client sees a
+  // Tier 2 account, Finn interrupts. It fires once and is remembered in the save.
+  const huntUnlocked = () => myTier() >= 2;
+  const huntAlertPending = () => huntUnlocked() && !state.huntAlerted;
+
+  function dismissHuntAlert() {
+    state.huntAlerted = true;
+    saveState();
+  }
+
+  // Wraps a destination: shows the alert if one is due, otherwise goes straight
+  // there. Every caller passes what should happen when there is nothing to say.
+  function maybeHuntAlert(then) {
+    if (!huntAlertPending()) return then();
+    huntAlert(then);
+  }
+
+  function huntAlert(then) {
+    show(`<main class="screen alert-screen">
+      <div class="content center">
+        <div class="urgent-badge">⚠ Urgent · from ${esc(GUIDE.name)}</div>
+        ${finnSolo(`${displayName()}. Drop what you're doing.`)}
+        <div class="urgent-body">
+          <p>Six accounts are working together to take the M Games apart from the inside, and one of
+            them cheated their way into a Tier 2 badge to do it. I have three of their letters and I
+            can't read a word of them.</p>
+          <p>You just made Tier 2. That makes you the only person I can hand the directory to —
+            every profile, every friendship, everywhere an account has been.</p>
+          <p><strong>Name all six and Tier 3 is yours. Name someone innocent and I have to throw out
+            everything you've given me and start again.</strong></p>
+        </div>
+      </div>
+      <div class="footer between">
+        <button class="btn secondary" data-later>Not right now</button>
+        <button class="btn" data-open>Open the case file</button>
+      </div>
+    </main>`);
+    // Either button counts as having seen it -- an alert that keeps reappearing
+    // stops being an alert.
+    on("[data-open]", "click", () => { dismissHuntAlert(); huntScreen(then); });
+    on("[data-later]", "click", () => { dismissHuntAlert(); then(); });
   }
 
   // ---- 0. Project M: the front door ----------------------------------------
@@ -921,6 +978,7 @@
     const t = tier();
     if (!t) return promoted();
     if (t.tournament) return diamond();
+    if (huntAlertPending()) return huntAlert(planet);
     const c = t.coronation;
     const cs = coronationStatus();
     const coroResult = state.results[coronationId()];
@@ -2534,6 +2592,7 @@
 
   function diamond(notice) {
     if (typeof notice !== "string") notice = "";
+    if (huntAlertPending()) return huntAlert(() => diamond(notice));
     const t = tier();
     const d = state.diamond;
     const bracket = DIAMOND.rounds.map((name, i) => {
@@ -2785,6 +2844,9 @@
     }
     let status = null;
     try { status = await apiJson("/api/arena/status"); } catch {}
+    // Loading the Arena settles any finished month, which is how Tier 2 is won.
+    // Ask who we are again so a promotion lands this session, not the next one.
+    await refreshMe();
     if (!status) {
       show(`<main class="screen">${bar("Arena of Champions")}
         <div class="content">${finn("Couldn't reach the Arena right now. Try again in a moment.")}</div>
@@ -3619,6 +3681,7 @@
   bootSync().then(() => {
     if (API.me && API.me.banned) return bannedScreen();
     if (API.me) unlock("start"); // "Log in"
-    projectM();
+    // A tier won since the last visit is news, so Finn gets in before the menu.
+    maybeHuntAlert(projectM);
   });
 })();
