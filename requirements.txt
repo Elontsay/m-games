@@ -3,3 +3,4 @@ Authlib>=1.3
 requests>=2.32
 python-dotenv>=1.0
 anthropic>=0.125   # 0.125 is the last release supporting Python 3.9; 1.x also works
+gunicorn>=21.2        # production WSGI server; not used by `python run.py`

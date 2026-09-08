@@ -10,6 +10,7 @@ Seeding is idempotent: accounts are keyed by (provider='npc', subject=username),
 so restarting the server never duplicates or overwrites them.
 """
 import json
+import sqlite3
 import time
 
 from .db import get_db
@@ -155,75 +156,102 @@ def _progress_blob(spec: dict) -> str:
 
 
 def _ensure_user(db, spec: dict) -> int:
+    """Create one cast member if it is not already there.
+
+    Check-then-insert is not enough: several web workers boot at once and seed
+    the same cast, so two can both find nothing and both insert. Letting the
+    database settle it -- insert, ignore a duplicate, then read back the id that
+    won -- makes this safe to run from every worker simultaneously."""
     username = spec["username"]
-    row = db.execute("SELECT id FROM users WHERE provider = 'npc' AND subject = ?", (username,)).fetchone()
-    if row:
-        return row["id"]
-    cur = db.execute(
+    db.execute(
         "INSERT INTO users (provider, subject, email, name, picture, created_at, tier) "
-        "VALUES ('npc', ?, NULL, ?, NULL, ?, ?)",
+        "VALUES ('npc', ?, NULL, ?, NULL, ?, ?) "
+        "ON CONFLICT (provider, subject) DO NOTHING",
         (username, username, _at(40, 12), spec.get("tier", 1)),
     )
-    user_id = cur.lastrowid
+    user_id = db.execute(
+        "SELECT id FROM users WHERE provider = 'npc' AND subject = ?", (username,)
+    ).fetchone()["id"]
     db.execute(
-        "INSERT INTO progress (user_id, data, updated_at) VALUES (?, ?, ?)",
+        "INSERT INTO progress (user_id, data, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT (user_id) DO NOTHING",
         (user_id, _progress_blob(spec), _at(1, 9)),
     )
     return user_id
 
 
 def _friend(db, ids, a: str, b: str, status: str, requester: str) -> None:
+    # Same race as _ensure_user: let the primary key decide who wins.
     lo, hi = sorted((ids[a], ids[b]))
-    if db.execute("SELECT 1 FROM friendships WHERE user_a = ? AND user_b = ?", (lo, hi)).fetchone():
-        return
     db.execute(
-        "INSERT INTO friendships (user_a, user_b, status, requested_by, created_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO friendships (user_a, user_b, status, requested_by, created_at) VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT (user_a, user_b) DO NOTHING",
         (lo, hi, status, ids[requester], _at(7, 15)),
     )
 
 
 def seed_world(app) -> None:
-    """Create the Hunt's cast if it isn't there yet."""
+    """Create the Hunt's cast if it isn't there yet.
+
+    Every web worker runs this at boot, so it has to be safe to run several
+    times at once. BEGIN IMMEDIATE takes the write lock before the count is
+    read: whichever worker gets there first seeds the world, and the others
+    wait (busy_timeout, see db.py) and then find the cast already present and
+    do nothing. Without the lock they would all pass the count check together
+    and each insert its own copy of the activity log and qualifier entries,
+    which carry no unique constraint to catch it."""
     with app.app_context():
         db = get_db()
-        already = db.execute("SELECT COUNT(*) AS n FROM users WHERE provider = 'npc'").fetchone()["n"]
-        if already >= len(TRAITORS) + len(INNOCENTS):
-            return
+        try:
+            db.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError:
+            return  # another worker holds the lock and is seeding; nothing to do
+        try:
+            already = db.execute("SELECT COUNT(*) AS n FROM users WHERE provider = 'npc'").fetchone()["n"]
+            if already >= len(TRAITORS) + len(INNOCENTS):
+                db.rollback()
+                return
+            _seed(db)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
-        ids = {}
-        for spec in TRAITORS + INNOCENTS:
-            ids[spec["username"]] = _ensure_user(db, spec)
 
-        for spec in TRAITORS + INNOCENTS:
-            uid = ids[spec["username"]]
-            cabin = spec.get("cabin")
-            if cabin:
-                place, days_ago, hour = cabin
-                if not db.execute(
-                    "SELECT 1 FROM activity_log WHERE user_id = ? AND location = ?", (uid, f"Cabin {place}")
-                ).fetchone():
-                    db.execute(
-                        "INSERT INTO activity_log (user_id, event, location, occurred_at) VALUES (?, ?, ?, ?)",
-                        (uid, "Entered", f"Cabin {place}", _at(days_ago, hour)),
-                    )
-            quiz = spec.get("qualifier")
-            if quiz and not db.execute("SELECT 1 FROM qualifier_entries WHERE user_id = ?", (uid,)).fetchone():
+def _seed(db) -> None:
+    ids = {}
+    for spec in TRAITORS + INNOCENTS:
+        ids[spec["username"]] = _ensure_user(db, spec)
+
+    for spec in TRAITORS + INNOCENTS:
+        uid = ids[spec["username"]]
+        cabin = spec.get("cabin")
+        if cabin:
+            place, days_ago, hour = cabin
+            if not db.execute(
+                "SELECT 1 FROM activity_log WHERE user_id = ? AND location = ?", (uid, f"Cabin {place}")
+            ).fetchone():
                 db.execute(
-                    "INSERT INTO qualifier_entries (user_id, answers, score, won, taken_at) VALUES (?, ?, ?, ?, ?)",
-                    (uid, json.dumps(quiz["answers"]), quiz["score"], int(quiz["won"]), _at(9, 13)),
+                    "INSERT INTO activity_log (user_id, event, location, occurred_at) VALUES (?, ?, ?, ?)",
+                    (uid, "Entered", f"Cabin {place}", _at(days_ago, hour)),
                 )
-            if spec.get("friend_accepted_with"):
-                _friend(db, ids, spec["username"], spec["friend_accepted_with"], "accepted", spec["username"])
-            if spec.get("friend_pending_to"):
-                _friend(db, ids, spec["username"], spec["friend_pending_to"], "pending", spec["username"])
-
-        for a, b in NOISE_FRIENDSHIPS:
-            _friend(db, ids, a, b, "accepted", a)
-        for viewer, viewed in NOISE_VIEWS:
+        quiz = spec.get("qualifier")
+        if quiz and not db.execute("SELECT 1 FROM qualifier_entries WHERE user_id = ?", (uid,)).fetchone():
             db.execute(
-                "INSERT OR IGNORE INTO profile_views (viewer_id, viewed_id, viewed_at) VALUES (?, ?, ?)",
-                (ids[viewer], ids[viewed], _at(3, 18)),
+                "INSERT INTO qualifier_entries (user_id, answers, score, won, taken_at) VALUES (?, ?, ?, ?, ?)",
+                (uid, json.dumps(quiz["answers"]), quiz["score"], int(quiz["won"]), _at(9, 13)),
             )
+        if spec.get("friend_accepted_with"):
+            _friend(db, ids, spec["username"], spec["friend_accepted_with"], "accepted", spec["username"])
+        if spec.get("friend_pending_to"):
+            _friend(db, ids, spec["username"], spec["friend_pending_to"], "pending", spec["username"])
 
-        # Ordinary players take the qualifier too, so entries alone prove nothing.
-        db.commit()
+    for a, b in NOISE_FRIENDSHIPS:
+        _friend(db, ids, a, b, "accepted", a)
+    for viewer, viewed in NOISE_VIEWS:
+        db.execute(
+            "INSERT OR IGNORE INTO profile_views (viewer_id, viewed_id, viewed_at) VALUES (?, ?, ?)",
+            (ids[viewer], ids[viewed], _at(3, 18)),
+        )
+
+    # Ordinary players take the qualifier too, so entries alone prove nothing.

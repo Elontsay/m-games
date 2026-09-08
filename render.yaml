@@ -1,0 +1,60 @@
+# Render blueprint for the M Games Flask app.
+#
+# Apply it from the Render dashboard: New → Blueprint, point it at this repo.
+# Everything below is created for you except the four secrets marked `sync: false`,
+# which Render will prompt for so they never live in git.
+#
+# The disk is the important part. Render wipes a service's filesystem on every
+# deploy, so a SQLite file inside the checkout would take every account, contest
+# and forum thread with it. The disk survives deploys; DATABASE_PATH points the
+# app at it.
+services:
+  - type: web
+    name: m-games
+    runtime: python
+    # A persistent disk needs a paid instance type. On a free instance drop the
+    # `disk:` block and DATABASE_PATH, and accept that the database resets on
+    # each deploy -- fine for a look, not for real players.
+    plan: starter
+    region: oregon
+    branch: main
+
+    buildCommand: pip install -r requirements.txt
+    # Two workers is plenty at this size, and SQLite is set up for it (WAL plus a
+    # busy timeout, see app/db.py). Raising this much further would want Postgres.
+    startCommand: gunicorn --workers 2 --timeout 120 --bind 0.0.0.0:$PORT 'app:create_app()'
+    # /api/me answers 200 with JSON whether or not anyone is signed in.
+    healthCheckPath: /api/me
+
+    disk:
+      name: mgames-data
+      mountPath: /var/data
+      sizeGB: 1
+
+    envVars:
+      # Serves over HTTPS behind Render's proxy: secure cookies, the
+      # X-Forwarded-Proto fix, and a hard failure if SECRET_KEY is missing.
+      - key: PRODUCTION
+        value: "1"
+      # On the mounted disk, not in the checkout.
+      - key: DATABASE_PATH
+        value: /var/data/mgames.db
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      # Render generates this once and keeps it. Changing it signs everyone out.
+      - key: SECRET_KEY
+        generateValue: true
+
+      # ---- asked for on first deploy, never stored in git ----
+      # From Google Cloud Console. The authorised redirect URI must be this
+      # service's URL with /auth/callback on the end.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      # Comma-separated emails that get the admin hacks panel.
+      - key: ADMIN_EMAILS
+        sync: false
+      # Optional. Without it the AI review button simply never appears.
+      - key: ANTHROPIC_API_KEY
+        sync: false

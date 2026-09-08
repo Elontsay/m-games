@@ -211,11 +211,35 @@ def _migrate(db: sqlite3.Connection) -> None:
     db.commit()
 
 
+def _tune(db: sqlite3.Connection) -> None:
+    """Settings that matter once more than one process is serving requests.
+
+    WAL lets readers carry on while a write is in progress, and busy_timeout
+    makes a writer wait its turn instead of failing immediately with
+    "database is locked". Without both, a second worker turns ordinary
+    concurrent play into random 500s.
+
+    busy_timeout goes first so it is in force for everything after it.
+
+    The WAL switch is allowed to fail. It needs a lock no other connection is
+    holding, and busy_timeout does not cover that particular conversion, so a
+    worker booting while another one is mid-write would otherwise die and take
+    the deploy with it. Journal mode is a property of the file rather than the
+    connection, so whichever worker gets there first sets it for everyone and
+    the losers have nothing left to do."""
+    db.execute("PRAGMA busy_timeout = 5000")
+    try:
+        db.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.OperationalError:
+        pass
+    db.execute("PRAGMA foreign_keys = ON")
+
+
 def get_db() -> sqlite3.Connection:
     if "db" not in g:
         g.db = sqlite3.connect(current_app.config["DATABASE"])
         g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
+        _tune(g.db)
     return g.db
 
 
@@ -228,6 +252,7 @@ def close_db(_exc=None):
 def init_db(app):
     db = sqlite3.connect(app.config["DATABASE"])
     db.row_factory = sqlite3.Row
+    _tune(db)
     db.executescript(SCHEMA)
     _migrate(db)
     db.close()

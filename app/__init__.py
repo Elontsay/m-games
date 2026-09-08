@@ -42,19 +42,58 @@ from .wallet import wallet_bp  # noqa: E402
 GOOGLE_METADATA_URL = "https://accounts.google.com/.well-known/openid-configuration"
 
 
+DEV_SECRET = "dev-only-change-me"
+
+
+def _flag(name: str) -> bool:
+    return os.environ.get(name, "").lower() in ("1", "true", "yes")
+
+
 def create_app() -> Flask:
     app = Flask(__name__, static_folder=None, instance_path=str(ROOT / "instance"))
+
+    # PRODUCTION says "this is served over HTTPS from behind a proxy". It turns on
+    # secure cookies and the proxy header fix, and it makes a missing SECRET_KEY
+    # fatal rather than silently falling back to a key that is public knowledge.
+    production = _flag("PRODUCTION")
+    secret = os.environ.get("SECRET_KEY", "")
+    if production and (not secret or secret == DEV_SECRET):
+        raise RuntimeError(
+            "SECRET_KEY must be set to a real random value when PRODUCTION=1. "
+            "Sessions are signed with it, so the default would let anyone forge a login. "
+            'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
+        )
+
+    # The database lives outside the checkout in production, because a host's
+    # filesystem is wiped on every deploy and accounts should not be.
+    database = os.environ.get("DATABASE_PATH") or str(ROOT / "instance" / "mgames.db")
+
     app.config.update(
-        SECRET_KEY=os.environ.get("SECRET_KEY", "dev-only-change-me"),
+        SECRET_KEY=secret or DEV_SECRET,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SECURE=production,
         GOOGLE_CLIENT_ID=os.environ.get("GOOGLE_CLIENT_ID", ""),
         GOOGLE_CLIENT_SECRET=os.environ.get("GOOGLE_CLIENT_SECRET", ""),
         ADMIN_EMAILS={e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()},
-        DEV_LOGIN=os.environ.get("DEV_LOGIN", "").lower() in ("1", "true", "yes"),
-        DATABASE=str(ROOT / "instance" / "mgames.db"),
+        # Never in production, whatever the environment says. /dev-login signs you
+        # in as any account by typing its name, so a stray DEV_LOGIN=1 -- from a
+        # .env that got deployed, or a copied config -- would be a way past Google
+        # sign-in entirely.
+        DEV_LOGIN=_flag("DEV_LOGIN") and not production,
+        DATABASE=database,
     )
     os.makedirs(app.instance_path, exist_ok=True)
+    os.makedirs(os.path.dirname(database) or ".", exist_ok=True)
+
+    if production:
+        # Behind a TLS-terminating proxy, Flask sees plain http and would build
+        # the OAuth redirect_uri as http://... -- which Google rejects with
+        # redirect_uri_mismatch. ProxyFix reads X-Forwarded-Proto and X-Forwarded-Host
+        # so url_for(_external=True) produces the real https URL.
+        from werkzeug.middleware.proxy_fix import ProxyFix
+
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
     init_db(app)
 

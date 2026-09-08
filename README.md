@@ -75,6 +75,40 @@ once and is remembered in the save.
 
 Progress is stored in `instance/mgames.db` (SQLite). Signing in on a new device loads the saved progress from the account.
 
+## Deploying
+
+`render.yaml` is a Render blueprint for this app: **New → Blueprint**, point it at this repo,
+and it creates the service, a 1 GB persistent disk, and a generated `SECRET_KEY`. Render will
+prompt for the four secrets marked `sync: false` so they never enter git.
+
+The disk matters. Render wipes a service's filesystem on every deploy, so a SQLite file inside
+the checkout would take every account, contest and forum thread with it. `DATABASE_PATH` points
+the app at the mounted disk instead. A persistent disk needs a paid instance type; on a free one,
+drop the `disk:` block and accept that the database resets on each deploy.
+
+Setting `PRODUCTION=1` changes three things:
+
+* **Secure cookies**, since the site is served over HTTPS.
+* **`ProxyFix`**, so `X-Forwarded-Proto` is honoured. Without it Flask sees plain http behind
+  Render's TLS proxy and builds the OAuth `redirect_uri` as `http://…`, which Google rejects
+  with `redirect_uri_mismatch`.
+* **`/dev-login` is refused**, whatever `DEV_LOGIN` says. It signs you in as any account by
+  typing its name, so a stray `DEV_LOGIN=1` would be a way straight past Google sign-in.
+
+It also refuses to start unless `SECRET_KEY` is a real value — sessions are signed with it, and
+the built-in default is public knowledge.
+
+After the first deploy, add the service's own callback URL to the authorised redirect URIs in
+Google Cloud Console, alongside the local ones:
+
+```
+https://<your-service>.onrender.com/auth/callback
+```
+
+SQLite is configured for more than one worker (WAL plus a busy timeout, see `app/db.py`), and
+the Hunt's world is seeded under a write lock so several workers booting at once cannot each
+insert their own copy of it. Much past two workers would want Postgres instead.
+
 ## AI review
 
 Put an Anthropic API key in `.env` as `ANTHROPIC_API_KEY` and the results screens grow an
