@@ -22,6 +22,9 @@ show red when their prerequisites aren't met, yellow when they are, and green on
 a subject's outgoing lines turn green as soon as any one of its levels is done. Progress
 lives in `state.guides` and is kept separately from the game's contest results.
 
+Planet M and the Diamond Arena both carry a **🏠 Project M** button, so the front door is one
+click away from anywhere in the game.
+
 The handbook and the game are two views of the same 32 subjects and link both ways: a stadium's
 lesson has a **📕 Full guide** button into the handbook, and a subject or guide page has a
 **🎮 Play the stadium** button back into the game when you are standing on that tier.

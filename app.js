@@ -1017,6 +1017,7 @@
       </div>
       <div class="footer between">
         <button class="btn link" data-reset>Reset progress</button>
+        <button class="btn secondary" data-project title="Back to the Project M menu">🏠 Project M</button>
         <button class="btn secondary" data-home>Back to start</button>
       </div>
     </main>`);
@@ -1029,6 +1030,7 @@
     });
     on("[data-coronation]", "click", playCoronation);
     on("[data-home]", "click", welcome);
+    on("[data-project]", "click", projectM);
     on("[data-reset]", "click", confirmReset);
     on("[data-achievements]", "click", () => achievementsScreen(planet));
     on("[data-admin]", "click", () => adminPanel(planet));
@@ -2627,6 +2629,7 @@
       </div>
       <div class="footer between">
         <button class="btn link" data-reset>Reset progress</button>
+        <button class="btn secondary" data-project title="Back to the Project M menu">🏠 Project M</button>
         <button class="btn secondary" data-home>Back to start</button>
       </div>
     </main>`);
@@ -2641,6 +2644,7 @@
     on("[data-arena]", "click", () => arenaScreen());
     on("[data-autobeat]", "click", adminAutoBeatFinn);
     on("[data-home]", "click", welcome);
+    on("[data-project]", "click", projectM);
     on("[data-reset]", "click", confirmReset);
     on("[data-achievements]", "click", () => achievementsScreen(diamond));
     on("[data-admin]", "click", () => adminPanel(diamond));
